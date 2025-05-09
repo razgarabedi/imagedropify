@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { uploadImage, type UploadedImageServerData } from '@/app/actions/imageActions';
+import { uploadImage, type UploadImageActionState, type UploadedImageServerData } from '@/app/actions/imageActions';
 import { useAuth } from '@/hooks/use-auth'; // For checking if user is logged in on client
 import Link from 'next/link';
 
@@ -28,11 +28,7 @@ interface ImageUploaderProps {
   onImageUpload: (imageFile: UploadedImageFile) => void;
 }
 
-const initialUploadState: {
-  success: boolean;
-  data?: UploadedImageServerData;
-  error?: string;
-} = { success: false };
+const initialUploadState: UploadImageActionState = { success: false };
 
 
 export function ImageUploader({ onImageUpload }: ImageUploaderProps) {

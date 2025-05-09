@@ -41,7 +41,7 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
   const resolvedUserSpecificPath = path.resolve(userSpecificPath);
   const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-  if (!resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep)) {
+  if (!resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserSpecificPath !== resolvedUploadDirBase && !resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.win32.sep)) {
       console.error(`Security alert: Attempt to create directory outside designated uploads area. Path: ${userSpecificPath}, UserID: ${userId}`);
       throw new Error('Path is outside allowed directory for user uploads.');
   }
@@ -63,9 +63,16 @@ export interface UploadedImageServerData {
   userId: string; // ID of the user who uploaded the image
 }
 
+export interface UploadImageActionState {
+  success: boolean;
+  data?: UploadedImageServerData;
+  error?: string;
+}
+
 export async function uploadImage(
+  prevState: UploadImageActionState, // Added prevState parameter
   formData: FormData
-): Promise<{ success: boolean; data?: UploadedImageServerData; error?: string }> {
+): Promise<UploadImageActionState> {
   const userId = await getCurrentUserIdFromSession();
   if (!userId) {
     return { success: false, error: 'User authentication required for upload.' };
@@ -149,7 +156,7 @@ export async function getUserImages(): Promise<UserImage[]> {
     const resolvedUserUploadDir = path.resolve(userUploadDir);
     const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-    if (!resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserUploadDir !== resolvedUploadDirBase) {
+    if (!resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserUploadDir !== resolvedUploadDirBase && !resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ) {
         console.error(`Security alert: Attempt to access images outside designated user uploads area. Path: ${userUploadDir}, UserID: ${userId}`);
         return []; // Path is outside allowed directory
     }
@@ -169,7 +176,7 @@ export async function getUserImages(): Promise<UserImage[]> {
       if (dirent.isDirectory() && dateFolderRegex.test(dirent.name)) {
         const dateFolderPath = path.join(userUploadDir, dirent.name);
         // Security: ensure dateFolderPath is still within userUploadDir
-        if (!path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.sep)) {
+        if (!path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.sep) && !path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.win32.sep)) {
             console.warn(`Skipping potentially malicious path: ${dateFolderPath}`);
             continue;
         }
@@ -178,25 +185,25 @@ export async function getUserImages(): Promise<UserImage[]> {
           const imageFileDetails = await Promise.all(
             filesInDateFolder.map(async (file) => {
               // Sanitize file name before joining: basic check for traversal
-              if (file.includes('..') || file.includes('/')) {
+              if (file.includes('..') || file.includes('/') || file.includes(path.win32.sep)) {
                 console.warn(`Skipping potentially malicious file name: ${file}`);
                 return null;
               }
               const filePath = path.join(dateFolderPath, file);
               // Security: ensure filePath is still within dateFolderPath
-              if (!path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.sep)) {
+              if (!path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.sep) && !path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.win32.sep)) {
                 console.warn(`Skipping potentially malicious file path: ${filePath}`);
                 return null;
               }
               try {
-                const stats = await stat(filePath);
+                const statsResult = await stat(filePath);
                 const validExtensions = Object.values(MIME_TO_EXTENSION);
-                if (stats.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
+                if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
                   return {
                     id: `${userId}/${dirent.name}/${file}`, 
                     name: file,
                     url: `/uploads/users/${userId}/${dirent.name}/${file}`,
-                    ctime: stats.ctimeMs,
+                    ctime: statsResult.ctimeMs,
                     userId: userId,
                   };
                 }
@@ -227,9 +234,15 @@ export async function getUserImages(): Promise<UserImage[]> {
   }
 }
 
+export interface DeleteImageActionState {
+    success: boolean;
+    error?: string;
+}
+
 export async function deleteImage(
+  prevState: DeleteImageActionState, // Added prevState
   imagePathFragment: string // e.g., MM.YYYY/filename.ext (relative to user's dir)
-): Promise<{ success: boolean; error?: string }> {
+): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
     return { success: false, error: 'User authentication required for deletion.' };
@@ -238,7 +251,7 @@ export async function deleteImage(
   // Validate imagePathFragment to prevent path traversal.
   // It should not contain '..' or start with '/'. It should be 'MM.YYYY/filename.ext'.
   const normalizedFragment = path.normalize(imagePathFragment);
-  if (normalizedFragment.includes('..') || normalizedFragment.startsWith(path.sep) || normalizedFragment.split(path.sep).length !== 2) {
+   if (normalizedFragment.includes('..') || normalizedFragment.startsWith(path.sep) || normalizedFragment.startsWith(path.win32.sep) || normalizedFragment.split(path.sep).length !== 2 && normalizedFragment.split(path.win32.sep).length !== 2) {
       console.error(`Security alert: Invalid imagePathFragment for deletion. User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
       return { success: false, error: 'Invalid image path format for deletion.' };
   }
@@ -249,7 +262,7 @@ export async function deleteImage(
   const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
   const resolvedFullPath = path.resolve(fullServerPath);
 
-  if (!resolvedFullPath.startsWith(userBaseDir + path.sep)) {
+  if (!resolvedFullPath.startsWith(userBaseDir + path.sep) && !resolvedFullPath.startsWith(userBaseDir + path.win32.sep)) {
       console.error(`Security alert: User ${requestingUserId} attempted to delete path outside their directory: ${fullServerPath}`);
       return { success: false, error: 'Unauthorized attempt to delete file. Path is outside your allowed directory.' };
   }
@@ -282,3 +295,4 @@ export async function deleteImage(
  *   - Set `X-Content-Type-Options: nosniff`.
  * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure.
  */
+

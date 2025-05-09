@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
-import { deleteImage } from '@/app/actions/imageActions';
+import { deleteImage, type DeleteImageActionState } from '@/app/actions/imageActions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,7 +32,7 @@ interface ImagePreviewCardProps {
   onDelete?: (imageId: string) => void; // Callback after successful deletion, passes the server ID
 }
 
-const initialDeleteState: { success: boolean; error?: string } = { success: false };
+const initialDeleteState: DeleteImageActionState = { success: false };
 
 export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: ImagePreviewCardProps) {
   const { toast } = useToast();
@@ -48,13 +48,11 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
 
 
   const [deleteActionState, deleteFormAction, isDeletePending] = useActionState(
-    async (currentState: typeof initialDeleteState, formData: FormData) => {
-        // The user object from useAuth() is client-side.
-        // The deleteImage server action will verify the session on the server.
-        // We just need to pass the correct imagePathFragment.
+    async (currentState: DeleteImageActionState, formData: FormData) => {
         const fragment = formData.get('imagePathFragment') as string;
         if (!fragment) return { success: false, error: "Image path fragment is missing."};
-        const result = await deleteImage(fragment); 
+        // Pass currentState as the first argument to deleteImage
+        const result = await deleteImage(currentState, fragment); 
         return result;
     },
     initialDeleteState
@@ -187,3 +185,4 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
     </Card>
   );
 }
+
