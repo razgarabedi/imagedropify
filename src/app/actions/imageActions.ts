@@ -262,14 +262,34 @@ export async function deleteImage(
     return { success: false, error: 'User authentication required for deletion.' };
   }
 
-  const normalizedFragment = path.normalize(imagePathFragment);
-  const fragmentParts = normalizedFragment.split(path.sep);
-  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1] || fragmentParts[1].includes(path.sep) || fragmentParts[1].includes(path.win32.sep) || fragmentParts[1].includes('..')) {
-      console.error(`Security alert: Invalid imagePathFragment for deletion. User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
-      return { success: false, error: 'Invalid image path format for deletion.' };
+  // Validate imagePathFragment structure: 'MM.YYYY/filename.ext'
+  // The fragment is constructed on client using '/' as separator.
+  if (typeof imagePathFragment !== 'string' || imagePathFragment.includes('..')) {
+    console.error(`Security alert: Invalid imagePathFragment (contains '..' or not a string). User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
+    return { success: false, error: 'Invalid image path format for deletion.' };
   }
 
-  const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, normalizedFragment);
+  const parts = imagePathFragment.split('/');
+  if (parts.length !== 2) {
+    console.error(`Security alert: Invalid imagePathFragment structure (not 'folder/file'). User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
+    return { success: false, error: 'Invalid image path format for deletion.' };
+  }
+
+  const dateFolder = parts[0];
+  const filename = parts[1];
+
+  if (!/^\d{2}\.\d{4}$/.test(dateFolder)) {
+    console.error(`Security alert: Invalid date folder component in fragment. User: ${requestingUserId}, DateFolder: ${dateFolder}`);
+    return { success: false, error: 'Invalid image path format for deletion.' };
+  }
+
+  if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+    console.error(`Security alert: Invalid filename component in fragment. User: ${requestingUserId}, Filename: ${filename}`);
+    return { success: false, error: 'Invalid image path format for deletion.' };
+  }
+  
+  // Construct the full path using validated components and platform-specific separator
+  const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateFolder, filename);
   
   const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
   const resolvedFullPath = path.resolve(fullServerPath);
@@ -330,15 +350,31 @@ export async function renameImage(
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
 
-  const normalizedFragment = path.normalize(currentImagePathFragment);
-  const fragmentParts = normalizedFragment.split(path.sep);
-  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1] || fragmentParts[1].includes(path.sep) || fragmentParts[1].includes(path.win32.sep) || fragmentParts[1].includes('..')) {
-    console.error(`Security alert: Invalid currentImagePathFragment for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
+  // Validate currentImagePathFragment structure: 'MM.YYYY/filename.ext'
+  if (typeof currentImagePathFragment !== 'string' || currentImagePathFragment.includes('..')) {
+    console.error(`Security alert: Invalid currentImagePathFragment (contains '..' or not a string) for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
     return { success: false, error: 'Invalid current image path format for renaming.' };
   }
   
-  const dateFolder = fragmentParts[0];
-  const oldFilenameWithExt = fragmentParts[1];
+  const parts = currentImagePathFragment.split('/');
+  if (parts.length !== 2) {
+    console.error(`Security alert: Invalid currentImagePathFragment structure (not 'folder/file') for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
+    return { success: false, error: 'Invalid current image path format for renaming.' };
+  }
+
+  const dateFolder = parts[0];
+  const oldFilenameWithExt = parts[1];
+
+  if (!/^\d{2}\.\d{4}$/.test(dateFolder)) {
+      console.error(`Security alert: Invalid date folder component in fragment for rename. User: ${requestingUserId}, DateFolder: ${dateFolder}`);
+      return { success: false, error: 'Invalid current image path format for renaming.' };
+  }
+
+  if (!oldFilenameWithExt || oldFilenameWithExt.includes('/') || oldFilenameWithExt.includes('\\') || oldFilenameWithExt.includes('..')) {
+      console.error(`Security alert: Invalid filename component in fragment for rename. User: ${requestingUserId}, Filename: ${oldFilenameWithExt}`);
+      return { success: false, error: 'Invalid current image path format for renaming.' };
+  }
+
   const extension = path.extname(oldFilenameWithExt);
 
   if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
@@ -358,9 +394,8 @@ export async function renameImage(
   const resolvedOldPath = path.resolve(oldFullPath);
   const resolvedNewPath = path.resolve(newFullPath);
 
-  // Corrected path safety check: ensure both old and new paths are within the user's directory
-  const isOldPathSafe = resolvedOldPath.startsWith(userBaseDir + path.sep);
-  const isNewPathSafe = resolvedNewPath.startsWith(userBaseDir + path.sep);
+  const isOldPathSafe = resolvedOldPath.startsWith(userBaseDir + path.sep) || resolvedOldPath.startsWith(userBaseDir + path.win32.sep);
+  const isNewPathSafe = resolvedNewPath.startsWith(userBaseDir + path.sep) || resolvedNewPath.startsWith(userBaseDir + path.win32.sep);
 
   if (!isOldPathSafe || !isNewPathSafe) {
     console.error(`Security alert: User ${requestingUserId} attempted to rename file with path outside their directory. Old: ${oldFullPath}, New: ${newFullPath}`);
@@ -373,7 +408,7 @@ export async function renameImage(
       await fs.access(newFullPath);
       return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this folder.` };
     } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e;
+      if (e.code !== 'ENOENT') throw e; // Re-throw if it's not a "file not found" error
     }
 
     await fs.rename(oldFullPath, newFullPath);
@@ -405,11 +440,15 @@ export async function renameImage(
 /**
  * Note on Security (Local File System):
  * - User IDs in paths: User IDs from session are assumed to be non-malleable (e.g., UUIDs). Additional checks for '..' or '/' in `userId` are done where directories are created.
- * - Path construction: `path.join` and `path.resolve` are used. Resolved paths are validated to be within expected base directories for the user using `startsWith` and OS-specific path separators.
+ * - Path construction: `path.join` is used for constructing FS paths, which correctly uses OS-specific separators. `path.resolve` is used for canonicalizing paths for security checks.
  * - Input Sanitization: 
- *   - `imagePathFragment` for delete/rename is normalized and checked for '..', path separators within components, and expected structure (`MM.YYYY/filename.ext`).
+ *   - `imagePathFragment` (format `MM.YYYY/filename.ext`) for delete/rename is now parsed by splitting by `/`. Its components (`dateFolder`, `filename`) are individually validated for format and malicious characters (`..`, `/`, `\`).
  *   - `newNameWithoutExtension` for rename is sanitized (regexp replace for allowed characters) and length-limited.
- *   - File extensions are derived from MIME types on upload or checked against a list of valid extensions for rename/delete. Original extensions are preserved on rename.
+ *   - File extensions are derived from MIME types on upload or checked against a list of valid extensions for rename. Original extensions are preserved on rename.
+ * - Path Traversal Prevention:
+ *   - `ensureUploadDirsExist`: Checks `userId` and ensures resolved path is within `UPLOAD_DIR_BASE_PUBLIC`.
+ *   - `getUserImages`: Checks resolved paths for user's directory and subdirectories against base paths.
+ *   - `deleteImage`, `renameImage`: Critically, after constructing full file paths, `path.resolve` is used, and the resulting absolute path is checked to ensure it's within the `requestingUserId`'s specific subdirectory of `UPLOAD_DIR_BASE_PUBLIC` using `startsWith`. This is a key defense.
  * - File Permissions: The Node.js process (run by PM2) needs read/write permissions to `public/uploads/users/*`. Nginx needs read access to serve these files.
  * - Overwriting: The `renameImage` action checks if a file with the new name already exists and prevents overwriting.
  * - Nginx Configuration: Nginx config should:
