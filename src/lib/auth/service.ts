@@ -131,11 +131,15 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 
 export async function getCurrentUserIdFromSession(): Promise<string | null> {
   const cookieStore = cookies();
+  // "Read" the cookie store by checking for the existence of the cookie first,
+  // as recommended for Server Actions before using .get().
+  if (!cookieStore.has('session_token')) {
+    return null;
+  }
   const token = cookieStore.get('session_token')?.value;
   if (!token) {
-    return null;
+    return null; // Should be caught by .has() but good for safety
   }
   const payload = await verifySessionToken(token);
   return payload?.userId || null;
 }
-
