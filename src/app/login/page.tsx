@@ -40,8 +40,11 @@ export default function LoginPage() {
     } else if (!isLoginPending && loginState.error) {
       toast({ variant: 'destructive', title: 'Login Failed', description: loginState.error });
     }
-    setIsSubmitting(isLoginPending);
-  }, [loginState, isLoginPending, toast, router, setUser]);
+    // Only set isSubmitting based on login pending state if signup is not also pending
+    if (!isSignupPending) {
+      setIsSubmitting(isLoginPending);
+    }
+  }, [loginState, isLoginPending, isSignupPending, toast, router, setUser]);
 
   useEffect(() => {
     if (!isSignupPending && signupState.success && signupState.user) {
@@ -55,23 +58,21 @@ export default function LoginPage() {
     } else if (!isSignupPending && signupState.error) {
       toast({ variant: 'destructive', title: 'Signup Failed', description: signupState.error });
     }
-    setIsSubmitting(isSignupPending);
-  }, [signupState, isSignupPending, toast, router, setUser]);
+    // Only set isSubmitting based on signup pending state if login is not also pending
+    if(!isLoginPending) {
+      setIsSubmitting(isSignupPending);
+    }
+  }, [signupState, isSignupPending, isLoginPending, toast, router, setUser]);
 
 
   const handleLoginSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
-    // loginFormAction is used in form's action prop, so it's automatically wrapped in a transition
-    loginFormAction(formData);
+    startTransition(() => {
+      loginFormAction(formData);
+    });
   };
-
-  // handleSignupSubmit is not used directly by a form element's action prop for the signup button.
-  // Instead, handleSignupClick calls signupFormAction.
-  // const handleSignupSubmit = (e: FormEvent<HTMLFormElement>) => {
-  //   e.preventDefault(); 
-  // };
 
   const handleSignupClick = () => {
     if (!email || !password) {
