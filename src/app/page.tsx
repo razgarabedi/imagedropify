@@ -77,17 +77,22 @@ export default function Home() {
   }, [needsImageFetch, fetchUserImages]); 
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    // Image ID format from server: `userId/MM.YYYY/filename.ext`
-    // Image URL from server: `/uploads/users/userId/MM.YYYY/filename.ext`
-    // `imageFile.name` is originalName from server, `imageFile.url` is server url, `imageFile.userId` is uploader.
-    const serverFilename = imageFile.url.split('/').pop() || imageFile.name; // Get the actual server filename
+    // ImageFile.url from server: `/uploads/users/userId/MM.YYYY/filename.ext`
+    // ImageFile.userId from server: `userId`
+    // We need to construct an ID like: `userId/MM.YYYY/filename.ext`
+    const serverFilename = imageFile.url.split('/').pop() || imageFile.name; 
+    // imageFile.url.split('/') -> ['', 'uploads', 'users', 'USER_ID', 'MM.YYYY', 'filename.ext']
+    // We need 'MM.YYYY/filename.ext', which starts at index 4
+    const dateAndFilePart = imageFile.url.split('/').slice(4).join('/');
+    
     const newImage: DisplayImage = {
-      id: `${imageFile.userId}/${imageFile.url.split('/').slice(3).join('/')}`, // Construct ID: userId/dateFolder/filename.ext
+      id: `${imageFile.userId}/${dateAndFilePart}`, // Corrected ID construction
       name: serverFilename, 
       previewSrc: imageFile.url, 
       url: imageFile.url,
       uploaderId: imageFile.userId,
     };
+
     setUploadedImages((prevImages) => {
         const updatedImages = [newImage, ...prevImages];
         const uniqueImages = updatedImages.filter((img, index, self) =>
@@ -236,3 +241,4 @@ export default function Home() {
     </div>
   );
 }
+
