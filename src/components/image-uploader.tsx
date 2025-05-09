@@ -1,7 +1,7 @@
 // src/components/image-uploader.tsx
 "use client";
 
-import React, { useState, useCallback, useRef, useEffect, useActionState } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useActionState, startTransition } from 'react';
 import Image from 'next/image';
 import { UploadCloud, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -62,7 +62,6 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   useEffect(() => {
     if (isPending) {
       // Optionally, set some intermediate progress if desired
-      // For example, setUploadProgress(50) could be here or in the action itself
     } else if (actionState.success && actionState.data) {
       toast({
         title: 'Image Uploaded!',
@@ -110,7 +109,9 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
       // Prepare FormData and trigger the server action
       const formData = new FormData();
       formData.append('image', file);
-      formAction(formData);
+      startTransition(() => {
+        formAction(formData);
+      });
     };
     reader.onerror = () => {
       toast({ variant: 'destructive', title: 'Error Reading File', description: 'Could not read the selected file for preview.' });
@@ -164,6 +165,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   
   useEffect(() => {
     const currentPreview = localPreviewSrc;
+    // Clean up object URLs to prevent memory leaks
     return () => {
       if (currentPreview && currentPreview.startsWith('blob:')) {
         URL.revokeObjectURL(currentPreview);
@@ -192,7 +194,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
           role="button"
           aria-label="Image upload area"
           tabIndex={isPending ? -1 : 0}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !isPending) triggerFileInput(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if(!isPending) triggerFileInput(); }}}
         >
           <input
             type="file"
