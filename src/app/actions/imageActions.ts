@@ -76,63 +76,69 @@ export async function uploadImage(
   prevState: UploadImageActionState, 
   formData: FormData
 ): Promise<UploadImageActionState> {
-  const userId = await getCurrentUserIdFromSession();
-  if (!userId) {
-    return { success: false, error: 'User authentication required for upload.' };
-  }
-  
-  let currentActualUploadPath: string;
   try {
-    currentActualUploadPath = await ensureUploadDirsExist(userId);
-  } catch (error: any) {
-    console.error('Upload directory preparation failed:', error);
-    return { success: false, error: error.message || 'Server error preparing upload directory. Contact support.' };
-  }
-
-  const file = formData.get('image') as File | null;
-
-  if (!file) {
-    return { success: false, error: 'No file provided.' };
-  }
-
-  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-    return { success: false, error: `Invalid file type. Accepted types: JPG, PNG, GIF, WebP. You provided: ${file.type}` };
-  }
-
-  const fileExtension = MIME_TO_EXTENSION[file.type];
-  if (!fileExtension) {
-    return { success: false, error: `File type (${file.type}) is not supported or cannot be mapped to an extension.` };
-  }
-
-  if (file.size > MAX_FILE_SIZE) {
-    return { success: false, error: `File too large. Maximum allowed size is 10MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
-  }
-
-  const bytes = await file.arrayBuffer();
-  const buffer = Buffer.from(bytes);
-
-  // Sanitize original file name for suffix, but primary name is unique
-  const safeOriginalNamePart = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
-  const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-  const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0,255); 
-  
-  const filePath = path.join(currentActualUploadPath, filename);
-  const dateFolder = getFormattedDateFolder();
-
-  try {
-    await fs.writeFile(filePath, buffer);
-    const imageUrl = `/uploads/users/${userId}/${dateFolder}/${filename}`;
+    const userId = await getCurrentUserIdFromSession();
+    if (!userId) {
+      return { success: false, error: 'User authentication required for upload.' };
+    }
     
-    revalidatePath('/'); 
-    revalidatePath('/my-images');
+    let currentActualUploadPath: string;
+    try {
+      currentActualUploadPath = await ensureUploadDirsExist(userId);
+    } catch (error: any) {
+      console.error('Upload directory preparation failed:', error);
+      return { success: false, error: error.message || 'Server error preparing upload directory. Contact support.' };
+    }
+
+    const file = formData.get('image') as File | null;
+
+    if (!file) {
+      return { success: false, error: 'No file provided.' };
+    }
+
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      return { success: false, error: `Invalid file type. Accepted types: JPG, PNG, GIF, WebP. You provided: ${file.type}` };
+    }
+
+    const fileExtension = MIME_TO_EXTENSION[file.type];
+    if (!fileExtension) {
+      return { success: false, error: `File type (${file.type}) is not supported or cannot be mapped to an extension.` };
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return { success: false, error: `File too large. Maximum allowed size is 10MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
+    }
+
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    // Sanitize original file name for suffix, but primary name is unique
+    const safeOriginalNamePart = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0,255); 
     
-    return {
-      success: true,
-      data: { name: filename, url: imageUrl, originalName: file.name, userId },
-    };
-  } catch (error) {
-    console.error('Failed to save file to disk:', filePath, error);
-    return { success: false, error: 'Failed to save file on server. Please try again or contact support if the issue persists.' };
+    const filePath = path.join(currentActualUploadPath, filename);
+    const dateFolder = getFormattedDateFolder();
+
+    try {
+      await fs.writeFile(filePath, buffer);
+      const imageUrl = `/uploads/users/${userId}/${dateFolder}/${filename}`;
+      
+      revalidatePath('/'); 
+      revalidatePath('/my-images');
+      
+      return {
+        success: true,
+        data: { name: filename, url: imageUrl, originalName: file.name, userId },
+      };
+    } catch (error: any) {
+      console.error('Failed to save file to disk:', filePath, error);
+      return { success: false, error: 'Failed to save file on server. Please try again or contact support if the issue persists.' };
+    }
+  } catch (e: any) {
+    console.error("Unexpected error in uploadImage action:", e);
+    // This ensures that even if an unexpected error occurs, a structured response is sent.
+    return { success: false, error: "An unexpected server error occurred during upload. Please check server logs." };
   }
 }
 
