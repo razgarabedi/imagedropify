@@ -312,4 +312,38 @@ sudo certbot renew --dry-run
 4.  Rebuild the application: `npm run build`
 5.  Restart the application with PM2: `pm2 restart imagedrop`
 
+### Resetting User Data and Uploaded Images (Development/Testing)
+
+**WARNING: These steps will permanently delete all user accounts and all uploaded images. This is intended for development or testing purposes only.**
+
+If you need to reset the application to a clean state (no users, no images):
+
+1.  **Stop the Application:**
+    *   If running with `npm run dev`: Press `Ctrl+C` in the terminal.
+    *   If running with PM2: `pm2 stop imagedrop` (or the name you used, e.g., `pm2 stop your_app_name`).
+
+2.  **Delete User Data File:**
+    *   Navigate to your project's root directory (e.g., `/var/www/imagedrop`).
+    *   Delete the `users.json` file:
+        ```bash
+        rm users.json
+        ```
+        *(This file will be recreated empty when a new user signs up or if the application attempts to read it and it's missing, it will typically start with an empty user list).*
+
+3.  **Delete Uploaded Images:**
+    *   Navigate to the `public/uploads` directory within your project (e.g., `/var/www/imagedrop/public/uploads`).
+    *   Delete the `users` subdirectory. This contains all user-specific image folders.
+        ```bash
+        # Make sure you are in the correct directory: /var/www/imagedrop/public/uploads
+        # Then run:
+        rm -rf users
+        ```
+        *(The `public/uploads/users` directory structure will be recreated when users upload new images).*
+
+4.  **Restart the Application:**
+    *   If using `npm run dev`: `npm run dev`
+    *   If using PM2: `pm2 restart imagedrop` (or the name you used).
+
+After these steps, the application will have no registered users and no stored images.
+
 Your application should now be accessible via your server's IP address or domain name.
