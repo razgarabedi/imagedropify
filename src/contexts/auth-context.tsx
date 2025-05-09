@@ -5,14 +5,12 @@ import type { ReactNode } from 'react';
 import { createContext, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { User } from '@/lib/auth/types';
-import { getCurrentUserAction } from '@/lib/auth/actions';
+import { getCurrentUserAction } from '@/app/actions/authActions'; // Updated import path
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  // isFirebaseAvailable is no longer relevant for auth, remove or rename if used for other Firebase services
-  // For simplicity, removing it from AuthContext as auth is now local.
-  setUser: React.Dispatch<React.SetStateAction<User | null>>; // Allow components to update user state (e.g., after login)
+  setUser: React.Dispatch<React.SetStateAction<User | null>>;
 }
 
 export const AuthContext = createContext<AuthContextType>({
@@ -31,18 +29,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     async function fetchCurrentUser() {
+      setLoading(true); // Ensure loading is true at the start of fetch
       try {
         const currentUser = await getCurrentUserAction();
         setUser(currentUser);
       } catch (error) {
         console.error("Failed to fetch current user:", error);
-        setUser(null); // Ensure user is null if session check fails
+        setUser(null); 
       } finally {
         setLoading(false);
       }
     }
     fetchCurrentUser();
-  }, []);
+  }, []); // Removed setUser from dependencies as it can cause loops if not memoized by caller
 
   if (loading) {
     return (

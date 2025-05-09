@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { logoutUserAction } from '@/lib/auth/actions';
+import { logoutUserAction } from '@/app/actions/authActions'; // Updated import path
 import React from 'react';
 
 
@@ -23,16 +23,23 @@ export function AuthButton() {
   const { toast } = useToast(); 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
 
-  const handleLogout = () => { 
+  const handleLogout = async () => { 
     setIsLoggingOut(true);
-    
-    logoutUserAction().catch((error) => {
+    try {
+      const result = await logoutUserAction();
+      if (result.success) {
+        setUser(null); 
+        // Redirect is handled by AuthContext or page navigations typically
+        // toast({ title: 'Logged Out', description: "You have been successfully logged out." });
+      } else {
+        toast({ variant: 'destructive', title: 'Logout Failed', description: result.error || 'Could not log out. Please try again.' });
+      }
+    } catch (error) {
       console.error('Logout initiation failed:', error);
       toast({ variant: 'destructive', title: 'Logout Failed', description: 'An unexpected error occurred. Please try again.' });
+    } finally {
       setIsLoggingOut(false); 
-    });
-
-    setUser(null); 
+    }
   };
 
   if (loading) {

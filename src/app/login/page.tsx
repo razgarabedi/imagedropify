@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import Image from 'next/image';
-import { loginUserAction, signupUserAction, type AuthActionResponse } from '@/lib/auth/actions';
+import { loginUserAction, signupUserAction, type AuthActionResponse } from '@/app/actions/authActions'; // Updated import
 import { useAuth } from '@/hooks/use-auth';
 import { Loader2 } from 'lucide-react';
 
@@ -19,19 +19,19 @@ const initialAuthState: AuthActionResponse = { success: false };
 export default function LoginPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { setUser } = useAuth(); // Get setUser from context to update global auth state
+  const { setUser } = useAuth(); 
 
   const [loginState, loginFormAction, isLoginPending] = useActionState(loginUserAction, initialAuthState);
   const [signupState, signupFormAction, isSignupPending] = useActionState(signupUserAction, initialAuthState);
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false); // General submitting state for button text
+  const [isSubmitting, setIsSubmitting] = useState(false); 
 
   useEffect(() => {
     if (!isLoginPending && loginState.success && loginState.user) {
       toast({ title: 'Login Successful', description: "You're now logged in." });
-      setUser(loginState.user); // Update global auth state
+      setUser(loginState.user); 
       if (loginState.redirectTo) {
         router.push(loginState.redirectTo);
       } else {
@@ -40,7 +40,7 @@ export default function LoginPage() {
     } else if (!isLoginPending && loginState.error) {
       toast({ variant: 'destructive', title: 'Login Failed', description: loginState.error });
     }
-    // Only set isSubmitting based on login pending state if signup is not also pending
+    
     if (!isSignupPending) {
       setIsSubmitting(isLoginPending);
     }
@@ -49,7 +49,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (!isSignupPending && signupState.success && signupState.user) {
       toast({ title: 'Signup Successful', description: "Account created and you're logged in." });
-      setUser(signupState.user); // Update global auth state
+      setUser(signupState.user); 
       if (signupState.redirectTo) {
         router.push(signupState.redirectTo);
       } else {
@@ -58,7 +58,7 @@ export default function LoginPage() {
     } else if (!isSignupPending && signupState.error) {
       toast({ variant: 'destructive', title: 'Signup Failed', description: signupState.error });
     }
-    // Only set isSubmitting based on signup pending state if login is not also pending
+
     if(!isLoginPending) {
       setIsSubmitting(isSignupPending);
     }
@@ -69,7 +69,7 @@ export default function LoginPage() {
     e.preventDefault();
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
-    startTransition(() => {
+    startTransition(() => { // Ensure Server Action is called within a transition
       loginFormAction(formData);
     });
   };
@@ -83,7 +83,7 @@ export default function LoginPage() {
     const formData = new FormData();
     formData.append('email', email);
     formData.append('password', password);
-    startTransition(() => {
+    startTransition(() => { // Ensure Server Action is called within a transition
       signupFormAction(formData);
     });
   };
