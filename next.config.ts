@@ -19,15 +19,12 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // Configure the body parser to accept larger request bodies for API routes (less relevant with App Router).
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb', 
-    },
-  },
   // Configure body size limit for Server Actions
-  serverActions: {
-    bodySizeLimit: '10mb', 
+  // Moved under experimental as the error reported it as unrecognized at the root.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '10mb', 
+    },
   },
 };
 
