@@ -44,7 +44,7 @@ export default function Home() {
 
     setIsLoadingInitialImages(true);
     try {
-      const userImagesFromServer = await getUserImages(); 
+      const userImagesFromServer = await getUserImages(8); // Fetch latest 8 images for homepage
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id, 
         name: img.name, 
@@ -207,3 +207,4 @@ export default function Home() {
     </div>
   );
 }
+

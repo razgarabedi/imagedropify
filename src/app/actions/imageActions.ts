@@ -120,6 +120,7 @@ export async function uploadImage(
     const imageUrl = `/uploads/users/${userId}/${dateFolder}/${filename}`;
     
     revalidatePath('/'); 
+    revalidatePath('/my-images'); // Revalidate the new page as well
     
     return {
       success: true,
@@ -140,7 +141,7 @@ export interface UserImage {
   userId: string;
 }
 
-export async function getUserImages(): Promise<UserImage[]> {
+export async function getUserImages(limit?: number): Promise<UserImage[]> {
   const userId = await getCurrentUserIdFromSession();
   if (!userId) {
     return [];
@@ -212,7 +213,11 @@ export async function getUserImages(): Promise<UserImage[]> {
     }
 
     allImages.sort((a, b) => b.ctime - a.ctime);
-    return allImages.slice(0, 8); // Return last 8 uploaded photos
+    
+    if (limit) {
+        return allImages.slice(0, limit);
+    }
+    return allImages;
 
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
@@ -259,6 +264,7 @@ export async function deleteImage(
     await fs.unlink(fullServerPath); 
     
     revalidatePath('/'); 
+    revalidatePath('/my-images'); // Revalidate the new page as well
     return { success: true };
   } catch (error: any) {
     if (error.code === 'ENOENT') {
@@ -281,3 +287,4 @@ export async function deleteImage(
  *   - Set `X-Content-Type-Options: nosniff`.
  * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure.
  */
+

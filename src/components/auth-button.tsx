@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogIn, LogOut, UserCircle, Loader2 } from 'lucide-react';
+import { LogIn, LogOut, UserCircle, Loader2, Images } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu,
@@ -54,6 +54,13 @@ export function AuthButton() {
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>{user.email}</DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem asChild className="cursor-pointer">
+            <Link href="/my-images">
+              <Images className="mr-2 h-4 w-4" />
+              My Images
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout} className="text-destructive hover:!bg-destructive hover:!text-destructive-foreground cursor-pointer" disabled={isLoggingOut}>
             <LogOut className="mr-2 h-4 w-4" />
             {isLoggingOut ? 'Logging out...' : 'Logout'}
@@ -72,3 +79,4 @@ export function AuthButton() {
     </Button>
   );
 }
+
