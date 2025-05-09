@@ -95,10 +95,10 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
 **CRITICAL SECURITY NOTE for `JWT_SECRET_KEY`**: The `JWT_SECRET_KEY` is vital for securing user sessions. Ensure it is a long, random, and unique string. **Do not use the default placeholder value in production.**
 
 **Important for file uploads & local user data:**
-*   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist. The file size limit is currently set to 10MB in the application and Nginx.
+*   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist. The file size limit is currently set to 6MB in the application (Next.js config) and 10MB in the Nginx example (ensure Nginx limit is >= app limit).
 *   **Local user data (including plain text passwords - DEMO ONLY, INSECURE)** is stored in `users.json` in the project root. Ensure this file is writable by the Node.js process (run by PM2) and **NEVER commit `users.json` to version control.** It should be in your `.gitignore` file.
 *   Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory. Typically, PM2 runs as the user who starts it. If you start PM2 as your regular user, ensure this user can write into `/var/www/imagedrop/public` and can create/write to `users.json` in `/var/www/imagedrop/`.
-*   The Nginx user (typically `www-data`) needs read permissions for the entire path to the uploaded files (e.g., `/var/www/imagedrop/public/uploads/users/[userId]/[MM.YYYY]/filename.ext`) to serve them.
+*   The Nginx user (typically `www-data`) needs read permissions for the entire path to the uploaded files (e.g., `/var/www/imagedrop/public/uploads/users/[userId]/[MM.YYYY]/filename.ext`) to serve them. This includes read access to the files and read+execute access on all directories in the path.
 
 ### Step 6: Build the Application
 
@@ -146,7 +146,7 @@ sudo apt install -y nginx
 sudo nano /etc/nginx/sites-available/imagedrop
 ```
 
-Paste the following configuration into the file. **Remember to replace `your_domain.com` with your actual domain name and `/var/www/imagedrop` with the correct path to your project.**
+Paste the following configuration into the file. **Remember to replace `your_domain.com` with your actual domain name and `/var/www/imagedrop` with the correct path to your project.** The `client_max_body_size` for Nginx should be equal to or greater than the Next.js application's upload limit (currently 6MB in app, example below sets 10M for Nginx).
 
 ```nginx
 server {
@@ -181,14 +181,15 @@ server {
     # Serve uploaded images directly from the filesystem
     # and apply security measures.
     location /uploads/ {
-        alias /var/www/imagedrop/public/uploads/; # IMPORTANT: Update this path to your project's public/uploads directory
+        # IMPORTANT: Update this alias path to your project's actual 'public/uploads' directory.
+        # Example: if your project is at /srv/my-image-app, this should be /srv/my-image-app/public/uploads/
+        alias /var/www/imagedrop/public/uploads/; 
         autoindex off; # Disable directory listing
         expires 1M;    # Cache static assets for 1 month
         access_log off; # Disable access logging for these files if desired
         add_header Cache-Control "public";
 
         # Security: Prevent execution of any scripts in the uploads folder.
-        # This is a best-effort attempt. Ensure file permissions are also restrictive.
         location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
             deny all;
             return 403;
@@ -198,12 +199,10 @@ server {
     }
 
     # Handle Next.js static assets efficiently
-    # These are served by the Next.js app itself through the proxy for consistency,
-    # but Nginx could be configured to serve them directly if optimized caching is needed.
     location /_next/static/ {
-        proxy_cache_bypass $http_upgrade; # Ensure fresh assets during development/updates
+        proxy_cache_bypass $http_upgrade; 
         proxy_pass http://localhost:3000/_next/static/;
-        expires max; # Cache aggressively in production
+        expires max; 
         add_header Cache-Control "public";
     }
     
@@ -215,16 +214,12 @@ server {
     # }
 
     # Optional: SSL Configuration with Certbot (Let's Encrypt)
-    # After obtaining SSL certs with Certbot, it will usually modify this file.
-    # An example if you were to set it manually initially:
     # listen 443 ssl http2;
     # server_name your_domain.com www.your_domain.com;
-    #
     # ssl_certificate /etc/letsencrypt/live/your_domain.com/fullchain.pem;
     # ssl_certificate_key /etc/letsencrypt/live/your_domain.com/privkey.pem;
     # include /etc/letsencrypt/options-ssl-nginx.conf;
     # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    #
     # if ($scheme != "https") {
     #    return 301 https://$host$request_uri;
     # }
@@ -285,84 +280,74 @@ sudo certbot renew --dry-run
     *   The `users.json` file should have restrictive file permissions (only writable by the Node.js process user).
     *   **Ensure `users.json` is in your `.gitignore` and never committed to your repository.**
 *   **File Uploads (`public/uploads`)**:
-    *   Nginx Configuration: The provided Nginx config includes a `location /uploads/` block designed to serve files directly and attempt to deny script execution. Ensure `client_max_body_size` in Nginx is equal to or greater than your Next.js application's upload limit (currently 10MB in app and Nginx). The `alias` path in Nginx config must precisely match your project's `public/uploads` directory structure.
-    *   File Permissions: Ensure the `public/uploads` directory and its subdirectories are not world-writable. The user running the Node.js/Next.js application (via PM2) needs write permissions to create files and directories. The Nginx user (usually `www-data`) needs read access to the entire path of the uploaded files to serve them correctly. Incorrect permissions can lead to Nginx returning a 403 Forbidden or 404 Not Found (which might be an HTML page).
-    *   Content Validation: Robust server-side validation of uploaded file types and content is crucial within the application itself (partially handled by `imageActions.ts`).
-*   **Session Management**: JWTs are stored in HTTP-only cookies, which is a good practice. Ensure HTTPS is used in production to protect session tokens in transit.
+    *   Nginx Configuration: The provided Nginx config includes a `location /uploads/` block designed to serve files directly. Ensure the `alias` path in this block points to the *exact* filesystem path of your project's `public/uploads` directory. `client_max_body_size` in Nginx (e.g., 10M) must be equal to or greater than your Next.js application's upload limit (6MB, set in `next.config.ts`).
+    *   File Permissions: The Node.js application (run by PM2) needs write permissions to `public/uploads/users/` to create user-specific folders and files. The Nginx user (typically `www-data`) needs read access to the image files and read+execute access on all directories in the path (e.g., `/var/www/imagedrop`, `public`, `uploads`, `users`, `[userId]`, `[MM.YYYY]`) to serve them.
+    *   Content Validation: Server-side validation of uploaded file types is handled in `imageActions.ts`.
+*   **Session Management**: JWTs are stored in HTTP-only cookies. Ensure HTTPS is used in production.
 
 ### Troubleshooting
 
-*   **502 Bad Gateway:** This usually means Nginx cannot reach your Next.js application.
-    *   Check if PM2 is running your app: `pm2 list`.
+*   **502 Bad Gateway:**
+    *   Check PM2 status: `pm2 list`.
     *   Check PM2 logs: `pm2 logs imagedrop`.
-    *   Ensure the `proxy_pass` in Nginx config points to the correct port (default `http://localhost:3000`).
+    *   Ensure `proxy_pass` in Nginx config points to `http://localhost:3000`.
 *   **Permission Denied:**
-    *   For Nginx logs: Ensure `/var/log/nginx` exists and Nginx has permissions.
-    *   For application files: Ensure the user running PM2 has read access to project files and write access to `public/uploads` and `users.json`.
-    *   For Nginx serving uploads: Ensure the Nginx user (`www-data`) has read permissions for the full path to the uploaded images in `/var/www/imagedrop/public/uploads/`.
-*   **Nginx Configuration Test Fails:** Carefully review `sudo nginx -t` output for syntax errors.
-*   **Login/Signup Issues:**
-    *   Check PM2 logs for errors related to reading/writing `users.json` or JWT generation.
-    *   Ensure `JWT_SECRET_KEY` is set in `.env.local`.
-    *   Check browser console for client-side errors.
-*   **Uploaded Images Show "isn't a valid image" or "received text/html" Error:**
-    *   This typically means the URL for the image (e.g., `/uploads/users/.../image.jpg`) is returning an HTML page (like a 404 Not Found page) instead of the actual image data.
-    *   **In Production (with Nginx):**
-        *   Verify the `alias` path in your Nginx configuration (`/etc/nginx/sites-available/imagedrop`) for the `location /uploads/` block is absolutely correct and points to `/your/project/path/public/uploads/`.
-        *   Ensure the Nginx user (`www-data`) has read permissions for the entire directory tree leading to the images and the images themselves.
-        *   Check Nginx error logs (`/var/log/nginx/imagedrop.error.log`) for clues.
-        *   Make sure your Nginx configuration was reloaded/restarted after changes (`sudo systemctl restart nginx`).
-    *   **In Development (`npm run dev`):**
-        *   The Next.js dev server should serve files from the `public` directory. If it's returning HTML, it means it couldn't find the file at `public/uploads/users/...`.
-        *   Verify the file exists at the expected path within your project's `public` folder immediately after upload.
-        *   Check for case sensitivity issues if developing on Windows/macOS and deploying to Linux.
+    *   Nginx logs: Ensure `/var/log/nginx` exists and Nginx has permissions.
+    *   Application files: User running PM2 needs read access to project files, write access to `public/uploads` and `users.json`.
+    *   Nginx serving uploads: Nginx user (`www-data`) needs read permissions for the full path to images in `/var/www/imagedrop/public/uploads/` and execute permissions on parent directories.
+*   **Nginx Configuration Test Fails (`sudo nginx -t`):** Review output for syntax errors.
+*   **Login/Signup Issues:** Check PM2 logs and browser console. Ensure `JWT_SECRET_KEY` is set.
+*   **Uploaded Images Show "isn't a valid image" or "received text/html" (Error for `/uploads/...`)**
+    *   This error means that when your browser requests an image URL (e.g., `http://your_domain.com/uploads/users/some_id/05.2024/image.jpg`), Nginx is returning an HTML page instead of the image. This HTML page is often an Nginx 403 Forbidden, 404 Not Found, or if the request is proxied back to Next.js, a Next.js 404 page.
+    *   **Check Nginx `alias` Path:**
+        1.  Open your Nginx site configuration: `sudo nano /etc/nginx/sites-available/imagedrop`.
+        2.  Find the `location /uploads/` block.
+        3.  Verify the `alias` path. If your project is at `/var/www/imagedrop`, the alias should be `alias /var/www/imagedrop/public/uploads/;`. If your project is elsewhere (e.g., `/home/myuser/my-app`), it should be `alias /home/myuser/my-app/public/uploads/;`. **The path must be exact and include the trailing slash.**
+    *   **Check File System Permissions:**
+        1.  The Nginx worker processes run as a specific user (often `www-data` on Debian/Ubuntu). This user needs:
+            *   **Read and Execute (rx)** permissions on every directory in the path to your images (e.g., `/`, `/var`, `/var/www`, `/var/www/imagedrop`, `public`, `uploads`, `users`, `[specific_user_id_folder]`, `[date_folder]`).
+            *   **Read (r)** permission on the image files themselves.
+        2.  You can check directory permissions with `ls -ld /path/to/directory` and file permissions with `ls -l /path/to/file`.
+        3.  To grant necessary permissions (example, adjust paths and user if different):
+            ```bash
+            # Find Nginx user (check nginx.conf or use ps aux | grep nginx)
+            # sudo chown -R your_pm2_user:www-data /var/www/imagedrop/public/uploads
+            sudo find /var/www/imagedrop/public/uploads -type d -exec chmod 755 {} \; # Grant rwx for owner, rx for group/others on DIRS
+            sudo find /var/www/imagedrop/public/uploads -type f -exec chmod 644 {} \; # Grant rw for owner, r for group/others on FILES
+            # Ensure parent directories also allow www-data to traverse
+            sudo chmod o+x /var/www/imagedrop /var/www/imagedrop/public /var/www/imagedrop/public/uploads /var/www/imagedrop/public/uploads/users
+            ```
+    *   **Check Nginx Error Logs:**
+        *   Open Nginx error log: `sudo tail -f /var/log/nginx/imagedrop.error.log` (or `/var/log/nginx/error.log`).
+        *   Try to access an uploaded image in your browser. Look for "permission denied" or "file not found" errors in the log corresponding to the image path. This is very indicative.
+    *   **Reload Nginx:** After any config or permission changes: `sudo systemctl restart nginx` (or `reload`).
+    *   **File Existence:** Double-check that the image file actually exists at the exact path Nginx is trying to access (e.g., `/var/www/imagedrop/public/uploads/users/your_user_id/MM.YYYY/your_image.jpg`). Case sensitivity matters on Linux.
 *   **Body Exceeded Limit Errors during Upload:**
-    *   Next.js Server Actions: The body size limit is configured in `next.config.ts` under `experimental.serverActions.bodySizeLimit`. Default is 1MB. Ensure this is set to `10mb` or higher.
-    *   Nginx: The `client_max_body_size` directive in Nginx configuration (`/etc/nginx/sites-available/imagedrop`) must also be set to `10M` or higher.
-    *   Both limits must accommodate your desired maximum upload size.
+    *   Next.js Server Actions: Body size limit is `6mb` in `next.config.ts` (`experimental.serverActions.bodySizeLimit`).
+    *   Nginx: `client_max_body_size` in Nginx config (e.g., `/etc/nginx/sites-available/imagedrop`) must be equal or greater (e.g., `10M`).
+    *   Both limits must accommodate your max upload size. Restart Nginx and PM2 app after changes.
 
 ### Updating the Application
 
 1.  Navigate to your project directory: `cd /var/www/imagedrop`
-2.  Pull the latest changes: `git pull origin main` (or your branch)
+2.  Pull latest changes: `git pull origin main`
 3.  Install/update dependencies: `npm install`
-4.  Rebuild the application: `npm run build`
-5.  Restart the application with PM2: `pm2 restart imagedrop`
+4.  Rebuild: `npm run build`
+5.  Restart with PM2: `pm2 restart imagedrop`
 
 ### Resetting User Data and Uploaded Images (Development/Testing)
 
 **WARNING: These steps will permanently delete all user accounts and all uploaded images. This is intended for development or testing purposes only.**
 
-If you need to reset the application to a clean state (no users, no images):
-
-1.  **Stop the Application:**
-    *   If running with `npm run dev`: Press `Ctrl+C` in the terminal.
-    *   If running with PM2: `pm2 stop imagedrop` (or the name you used, e.g., `pm2 stop your_app_name`).
-
-2.  **Delete User Data File:**
-    *   Navigate to your project's root directory (e.g., `/var/www/imagedrop`).
-    *   Delete the `users.json` file:
-        ```bash
-        rm users.json
-        ```
-        *(This file will be recreated empty when a new user signs up or if the application attempts to read it and it's missing, it will typically start with an empty user list).*
-
+1.  **Stop Application:**
+    *   PM2: `pm2 stop imagedrop`
+2.  **Delete User Data:**
+    *   `cd /var/www/imagedrop`
+    *   `rm users.json` (if it exists)
 3.  **Delete Uploaded Images:**
-    *   Navigate to the `public/uploads` directory within your project (e.g., `/var/www/imagedrop/public/uploads`).
-    *   Delete the `users` subdirectory. This contains all user-specific image folders.
-        ```bash
-        # Make sure you are in the correct directory: /var/www/imagedrop/public/uploads
-        # Then run:
-        rm -rf users
-        ```
-        *(The `public/uploads/users` directory structure will be recreated when users upload new images).*
+    *   `cd /var/www/imagedrop/public/uploads`
+    *   `rm -rf users`
+4.  **Restart Application:**
+    *   PM2: `pm2 restart imagedrop`
 
-4.  **Restart the Application:**
-    *   If using `npm run dev`: `npm run dev`
-    *   If using PM2: `pm2 restart imagedrop` (or the name you used).
-
-After these steps, the application will have no registered users and no stored images.
-
-Your application should now be accessible via your server's IP address or domain name.
-
-```
+Your application should now be accessible.
