@@ -1,16 +1,25 @@
 // src/lib/firebase/client.ts
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
-import { firebaseConfig } from './config';
+import { firebaseConfig, isFirebaseConfigured } from './config';
 
-let app: FirebaseApp;
-let auth: Auth;
+let app: FirebaseApp | undefined;
+let auth: Auth | undefined;
 
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
+if (isFirebaseConfigured) {
+  if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+  } else {
+    app = getApps()[0];
+  }
+  auth = getAuth(app);
 } else {
-  app = getApps()[0];
+  console.warn(
+    "Firebase is not configured due to missing environment variables. " +
+    "Firebase-dependent features (like authentication) will not be available. " +
+    "Please ensure all NEXT_PUBLIC_FIREBASE_* environment variables are set."
+  );
+  // app and auth remain undefined
 }
-auth = getAuth(app);
 
 export { app, auth };

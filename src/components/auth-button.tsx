@@ -4,10 +4,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase/client';
+import { auth } from '@/lib/firebase/client'; // auth can be undefined
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogIn, LogOut, UserCircle } from 'lucide-react';
+import { LogIn, LogOut, UserCircle, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu,
@@ -16,24 +16,37 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 
 
 export function AuthButton() {
-  const { user, loading } = useAuth();
+  const { user, loading, isFirebaseAvailable } = useAuth(); 
   const router = useRouter();
   const { toast } = useToast();
 
   const handleLogout = async () => {
+    if (!isFirebaseAvailable || !auth) {
+      toast({ variant: 'destructive', title: 'Logout Failed', description: 'Firebase authentication is not available.' });
+      return;
+    }
     try {
       await signOut(auth);
       toast({ title: 'Logged Out', description: "You've been successfully logged out." });
-      router.push('/'); // Or to a specific logout page
+      router.push('/'); 
     } catch (error) {
       console.error('Logout failed:', error);
       toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out. Please try again.' });
     }
   };
+
+  if (!isFirebaseAvailable && !loading) {
+    return (
+        <Button variant="outline" size="sm" disabled title="Firebase not configured. Authentication unavailable.">
+          <AlertTriangle className="mr-2 h-4 w-4 text-destructive" />
+          <span className="text-destructive">Auth Unavailable</span>
+        </Button>
+    );
+  }
 
   if (loading) {
     return <Button variant="outline" size="sm" disabled>Loading...</Button>;

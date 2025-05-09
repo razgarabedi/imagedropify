@@ -1,10 +1,10 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase/client';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword as fbCreateUser } from 'firebase/auth';
+import { auth } from '@/lib/firebase/client'; // auth can be undefined
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +12,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useAuth } from '@/hooks/use-auth'; 
+import { AlertTriangle } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,9 +22,32 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
+  const { isFirebaseAvailable, loading: authLoading } = useAuth(); 
+  const [showFirebaseError, setShowFirebaseError] = useState(false);
+
+  useEffect(() => {
+    if (!authLoading && !isFirebaseAvailable) {
+      setShowFirebaseError(true);
+      setError("Firebase is not configured. Login and Signup are unavailable.");
+      toast({
+        variant: 'destructive',
+        title: 'Configuration Error',
+        description: 'Firebase authentication is currently unavailable. Please ensure the application is correctly configured.',
+        duration: 10000, // Keep it visible longer
+      });
+    } else {
+      setShowFirebaseError(false);
+    }
+  }, [isFirebaseAvailable, authLoading, toast]);
+
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isFirebaseAvailable || !auth) {
+      setError('Firebase is not available. Cannot login.');
+      toast({ variant: 'destructive', title: 'Login Failed', description: 'Firebase authentication is not available.' });
+      return;
+    }
     setError(null);
     setIsLoading(true);
     try {
@@ -37,15 +62,16 @@ export default function LoginPage() {
     }
   };
   
-  // A simple signup function (can be expanded or moved)
   const handleSignup = async () => {
+    if (!isFirebaseAvailable || !auth) {
+      setError('Firebase is not available. Cannot sign up.');
+      toast({ variant: 'destructive', title: 'Signup Failed', description: 'Firebase authentication is not available.' });
+      return;
+    }
     setError(null);
     setIsLoading(true);
     try {
-      // For simplicity, using createUserWithEmailAndPassword directly.
-      // In a real app, you might redirect to a separate signup page or use a different flow.
-      const { createUserWithEmailAndPassword } = await import('firebase/auth');
-      await createUserWithEmailAndPassword(auth, email, password);
+      await fbCreateUser(auth, email, password); 
       toast({ title: 'Signup Successful', description: "You're now logged in." });
       router.push('/');
     } catch (err: any) {
@@ -64,6 +90,33 @@ export default function LoginPage() {
     }
   };
 
+  if (showFirebaseError && !isFirebaseAvailable) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md shadow-2xl">
+          <CardHeader className="text-center">
+            <div className="flex justify-center mb-4">
+              <AlertTriangle className="h-12 w-12 text-destructive" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-destructive">Authentication Service Unavailable</CardTitle>
+            <CardDescription>
+              Login and Signup services are currently unavailable due to a configuration issue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Please ensure Firebase environment variables (<code>NEXT_PUBLIC_FIREBASE_*</code>) are correctly set up.
+            </p>
+          </CardContent>
+          <CardFooter>
+             <Button asChild variant="outline" className="w-full">
+                <Link href="/">Go to Home</Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
@@ -87,7 +140,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={isLoading}
+                disabled={isLoading || !isFirebaseAvailable || authLoading}
               />
             </div>
             <div className="space-y-2">
@@ -99,18 +152,18 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                disabled={isLoading}
+                disabled={isLoading || !isFirebaseAvailable || authLoading}
               />
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full" disabled={isLoading || !isFirebaseAvailable || authLoading}>
               {isLoading ? 'Logging in...' : 'Login'}
             </Button>
           </form>
         </CardContent>
          <CardFooter className="flex flex-col items-center space-y-2 pt-4">
            <p className="text-sm text-muted-foreground">Don't have an account?</p>
-            <Button variant="outline" onClick={handleSignup} className="w-full" disabled={isLoading}>
+            <Button variant="outline" onClick={handleSignup} className="w-full" disabled={isLoading || !isFirebaseAvailable || authLoading}>
               {isLoading ? 'Signing up...' : 'Sign Up with Email & Password'}
             </Button>
         </CardFooter>
