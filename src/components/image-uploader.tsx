@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -8,7 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { uploadImageAction, type UploadImageResponse } from '@/app/actions/upload-actions';
-import { useFormState, useFormStatus } from 'react-dom';
+import { useFormStatus } from 'react-dom';
+import { useActionState } from 'react';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_IMAGE_MIME_TYPES_STRING = 'image/jpeg,image/png,image/gif,image/webp';
@@ -31,7 +33,6 @@ function UploaderFormFields({
   clientError,
   serverError,
   isDragging,
-  pending,
   handleDragEnter,
   handleDragLeave,
   handleDragOver,
@@ -45,7 +46,7 @@ function UploaderFormFields({
   clientError: string | null;
   serverError: string | null;
   isDragging: boolean;
-  pending: boolean;
+  pending?: boolean; // pending is passed from parent, not used internally here as useFormStatus takes over
   handleDragEnter: (e: React.DragEvent<HTMLDivElement>) => void;
   handleDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   handleDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -168,9 +169,8 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const { toast } = useToast();
 
   const initialState: UploadImageResponse = { success: false };
-  const [state, formAction] = useFormState(uploadImageAction, initialState);
-  // Note: useFormStatus().pending can't be used here directly, it must be in a component descendant of <form>
-  // So, we pass a general 'pending' derived from state if needed, or rely on SubmitButton's internal status.
+  const [state, formAction] = useActionState(uploadImageAction, initialState);
+
 
   const resetClientState = useCallback(() => {
     setPreviewSrc(null);
@@ -179,8 +179,6 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-    // Reset server action state by re-setting the form, or specific logic if needed
-    // For now, formRef.current?.reset() handles client form fields. Server state handled by new submissions.
   }, []);
 
   useEffect(() => {
@@ -194,7 +192,6 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
       formRef.current?.reset(); 
     } else if (state && !state.success) {
       const errorMsg = state.error || state.errors?._form?.join(', ') || state.errors?.file?.join(', ') || 'Upload failed. Please try again.';
-      // Set client error to display server validation messages through the same mechanism
       setClientError(errorMsg); 
       toast({
         variant: 'destructive',
@@ -208,18 +205,17 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const handleFileSelected = useCallback((file: File | null) => {
     setClientError(null); 
     if (!file) {
-      // If no file is selected (e.g., user cancels file dialog), reset preview
       setPreviewSrc(null);
       setFileName(null);
       if (fileInputRef.current) {
-          fileInputRef.current.value = ''; // Clear the file input
+          fileInputRef.current.value = ''; 
       }
       return;
     }
 
     if (!ACCEPTED_IMAGE_MIME_TYPES_ARRAY.includes(file.type)) {
       setClientError(`Invalid file type. Please upload JPG, PNG, GIF, or WebP. You provided: ${file.type}`);
-      resetClientState(); // Clear preview and file name
+      resetClientState(); 
       return;
     }
 
@@ -269,11 +265,8 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         const dataTransfer = new DataTransfer();
         dataTransfer.items.add(file);
         fileInputRef.current.files = dataTransfer.files;
-        // Manually trigger change event for React Hook Form or state updates if needed
-        // For controlled components, this might require dispatching an event.
-        // For uncontrolled with `name="file"`, this should be fine for FormData.
       }
-      handleFileSelected(file); // This will set previewSrc, fileName, and clientError
+      handleFileSelected(file); 
       e.dataTransfer.clearData();
     }
   };
@@ -294,8 +287,10 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   useEffect(() => {
     const currentPreview = previewSrc;
     return () => {
-      if (currentPreview && currentPreview.startsWith('blob:')) {
+      if (currentPreview && currentPreview.startsWith('blob:')) { // Check if it's a blob URL
         URL.revokeObjectURL(currentPreview);
+      } else if (currentPreview && currentPreview.startsWith('data:')) { // Check if it's a data URL
+        // Data URLs don't need explicit revocation, but good to be aware
       }
     };
   }, [previewSrc]);
@@ -316,7 +311,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
             clientError={clientError}
             serverError={serverErrorMsg}
             isDragging={isDragging}
-            pending={false} // General pending state for UI, form specific handled by useFormStatus in children
+            // pending={formStatus.pending} // Pass form status pending if needed by UploaderFormFields
             handleDragEnter={handleDragEnter}
             handleDragLeave={handleDragLeave}
             handleDragOver={handleDragOver}
