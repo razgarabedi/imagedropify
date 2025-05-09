@@ -18,6 +18,13 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Configure the body parser to accept larger request bodies (e.g., for file uploads)
+  // This applies to API routes and Server Actions.
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb', // Set the desired limit, e.g., 10MB
+    },
+  },
 };
 
 export default nextConfig;
