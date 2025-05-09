@@ -25,7 +25,15 @@ export interface AuthActionResponse {
 }
 
 export async function loginUserAction(formData: FormData): Promise<AuthActionResponse> {
-  const validation = loginSchema.safeParse(Object.fromEntries(formData));
+  const emailValue = formData.get('email');
+  const passwordValue = formData.get('password');
+
+  const dataToValidate = {
+    email: typeof emailValue === 'string' ? emailValue : undefined,
+    password: typeof passwordValue === 'string' ? passwordValue : undefined,
+  };
+
+  const validation = loginSchema.safeParse(dataToValidate);
   if (!validation.success) {
     return { success: false, error: validation.error.errors.map(e => e.message).join(', ') };
   }
@@ -57,7 +65,15 @@ export async function loginUserAction(formData: FormData): Promise<AuthActionRes
 }
 
 export async function signupUserAction(formData: FormData): Promise<AuthActionResponse> {
-  const validation = signupSchema.safeParse(Object.fromEntries(formData));
+  const emailValue = formData.get('email');
+  const passwordValue = formData.get('password');
+
+  const dataToValidate = {
+    email: typeof emailValue === 'string' ? emailValue : undefined,
+    password: typeof passwordValue === 'string' ? passwordValue : undefined,
+  };
+  
+  const validation = signupSchema.safeParse(dataToValidate);
   if (!validation.success) {
     return { success: false, error: validation.error.errors.map(e => e.message).join(', ') };
   }
