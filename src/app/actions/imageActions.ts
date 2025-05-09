@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache';
 import { getCurrentUserIdFromSession } from '@/lib/auth/service'; // Import session utility
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 6 * 1024 * 1024; // 6MB
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MIME_TO_EXTENSION: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -106,7 +106,7 @@ export async function uploadImage(
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return { success: false, error: `File too large. Maximum allowed size is 10MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
+      return { success: false, error: `File too large. Maximum allowed size is 6MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
     }
 
     const bytes = await file.arrayBuffer();

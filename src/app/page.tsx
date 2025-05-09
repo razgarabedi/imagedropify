@@ -149,7 +149,7 @@ export default function Home() {
                 Upload Your Images
               </h2>
               <p className="mt-4 text-lg text-muted-foreground">
-                Drag & drop your images or click to select files. Max 10MB per image. Supports JPG, PNG, GIF, WebP.
+                Drag & drop your images or click to select files. Max 6MB per image. Supports JPG, PNG, GIF, WebP.
               </p>
             </div>
             <div className="mt-10 max-w-2xl mx-auto">

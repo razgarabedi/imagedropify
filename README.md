@@ -95,7 +95,7 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
 **CRITICAL SECURITY NOTE for `JWT_SECRET_KEY`**: The `JWT_SECRET_KEY` is vital for securing user sessions. Ensure it is a long, random, and unique string. **Do not use the default placeholder value in production.**
 
 **Important for file uploads & local user data:**
-*   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist.
+*   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist. The file size limit is currently set to 6MB.
 *   **Local user data (including plain text passwords - DEMO ONLY, INSECURE)** is stored in `users.json` in the project root. Ensure this file is writable by the Node.js process (run by PM2) and **NEVER commit `users.json` to version control.** It should be in your `.gitignore` file.
 *   Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory. Typically, PM2 runs as the user who starts it. If you start PM2 as your regular user, ensure this user can write into `/var/www/imagedrop/public` and can create/write to `users.json` in `/var/www/imagedrop/`.
 
@@ -160,8 +160,8 @@ server {
     access_log /var/log/nginx/imagedrop.access.log;
     error_log /var/log/nginx/imagedrop.error.log;
 
-    # Increase client max body size for large image uploads (e.g., 20MB)
-    client_max_body_size 20M;
+    # Increase client max body size for large image uploads (e.g., 10MB, ensure this is >= your Next.js app limit)
+    client_max_body_size 10M;
 
     location / {
         proxy_pass http://localhost:3000; # Assuming Next.js app (via PM2) runs on port 3000
@@ -284,7 +284,7 @@ sudo certbot renew --dry-run
     *   The `users.json` file should have restrictive file permissions (only writable by the Node.js process user).
     *   **Ensure `users.json` is in your `.gitignore` and never committed to your repository.**
 *   **File Uploads (`public/uploads`)**:
-    *   Nginx Configuration: The provided Nginx config includes a `location /uploads/` block designed to serve files directly and attempt to deny script execution.
+    *   Nginx Configuration: The provided Nginx config includes a `location /uploads/` block designed to serve files directly and attempt to deny script execution. Ensure `client_max_body_size` in Nginx is equal to or greater than your Next.js application's upload limit (currently 6MB in app, Nginx set to 10M for safety).
     *   File Permissions: Ensure the `public/uploads` directory and its subdirectories are not world-writable and that the user running the Node.js/Next.js application (via PM2) only has the necessary write permissions. The Nginx user (usually `www-data`) needs read access.
     *   Content Validation: Robust server-side validation of uploaded file types and content is crucial within the application itself (partially handled by `imageActions.ts`).
 *   **Session Management**: JWTs are stored in HTTP-only cookies, which is a good practice. Ensure HTTPS is used in production to protect session tokens in transit.

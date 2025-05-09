@@ -14,7 +14,7 @@ import { useAuth } from '@/hooks/use-auth'; // For checking if user is logged in
 import Link from 'next/link';
 
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 6 * 1024 * 1024; // 6MB
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 export interface UploadedImageFile {
@@ -96,7 +96,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      toast({ variant: 'destructive', title: 'File Too Large', description: `File size cannot exceed 10MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` });
+      toast({ variant: 'destructive', title: 'File Too Large', description: `File size cannot exceed 6MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` });
       resetUploaderVisualState();
       return;
     }
@@ -255,7 +255,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
             <div className="flex flex-col items-center text-center pointer-events-none">
               <UploadCloud className="h-12 w-12 text-primary mb-4" />
               <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
-              <p className="text-sm text-muted-foreground">Max 10MB. JPG, PNG, GIF, WebP</p>
+              <p className="text-sm text-muted-foreground">Max 6MB. JPG, PNG, GIF, WebP</p>
             </div>
           )}
         </div>
