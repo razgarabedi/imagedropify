@@ -14,19 +14,19 @@ body {
     --card-foreground: 220 10% 25%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 10% 25%;
-    --primary: 180 65% 38%; /* Teal */
+    --primary: 180 100% 25%; /* Teal (#008080) */
     --primary-foreground: 0 0% 100%; /* White */
     --secondary: 220 15% 90%; /* Lighter cool gray */
     --secondary-foreground: 220 10% 25%;
     --muted: 220 15% 75%; /* Muted cool gray */
     --muted-foreground: 220 10% 45%;
-    --accent: 180 65% 38%; /* Teal */
+    --accent: 180 100% 25%; /* Teal (#008080) */
     --accent-foreground: 0 0% 100%; /* White */
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
     --border: 220 15% 88%; /* Subtle border color */
     --input: 220 15% 92%; /* Input background */
-    --ring: 180 65% 45%; /* Teal for focus rings */
+    --ring: 180 100% 30%; /* Teal for focus rings (slightly lighter than primary) */
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
     --chart-3: 197 37% 24%;
@@ -35,12 +35,12 @@ body {
     --radius: 0.5rem;
     --sidebar-background: 220 15% 98%;
     --sidebar-foreground: 220 10% 25%;
-    --sidebar-primary: 180 65% 38%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 180 65% 42%;
-    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-primary: 180 100% 25%; /* Teal (#008080) */
+    --sidebar-primary-foreground: 0 0% 100%; /* White */
+    --sidebar-accent: 180 100% 30%; /* Teal, slightly lighter for accent states if needed */
+    --sidebar-accent-foreground: 0 0% 100%; /* White */
     --sidebar-border: 220 15% 88%;
-    --sidebar-ring: 180 65% 45%;
+    --sidebar-ring: 180 100% 30%; /* Teal for focus rings */
   }
   .dark {
     --background: 220 15% 10%; /* Dark cool gray */
@@ -49,19 +49,19 @@ body {
     --card-foreground: 220 10% 85%;
     --popover: 220 15% 15%;
     --popover-foreground: 220 10% 85%;
-    --primary: 180 60% 55%; /* Brighter Teal */
+    --primary: 180 60% 55%; /* Brighter Teal for dark mode */
     --primary-foreground: 220 10% 10%; 
     --secondary: 220 15% 25%;
     --secondary-foreground: 220 10% 85%;
     --muted: 220 15% 30%;
     --muted-foreground: 220 10% 65%;
-    --accent: 180 60% 55%; /* Brighter Teal */
+    --accent: 180 60% 55%; /* Brighter Teal for dark mode */
     --accent-foreground: 220 10% 10%;
     --destructive: 0 60% 45%;
     --destructive-foreground: 0 0% 100%;
     --border: 220 15% 25%;
     --input: 220 15% 20%;
-    --ring: 180 60% 60%;
+    --ring: 180 60% 60%; /* Brighter Teal ring for dark mode */
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
@@ -69,12 +69,12 @@ body {
     --chart-5: 340 75% 55%;
     --sidebar-background: 220 15% 12%;
     --sidebar-foreground: 220 10% 85%;
-    --sidebar-primary: 180 60% 55%;
+    --sidebar-primary: 180 60% 55%; /* Brighter Teal for dark mode */
     --sidebar-primary-foreground: 220 10% 10%;
-    --sidebar-accent: 180 60% 50%;
+    --sidebar-accent: 180 60% 50%; /* Brighter Teal for dark mode */
     --sidebar-accent-foreground: 220 10% 10%;
     --sidebar-border: 220 15% 25%;
-    --sidebar-ring: 180 60% 60%;
+    --sidebar-ring: 180 60% 60%; /* Brighter Teal ring for dark mode */
   }
 }
 
