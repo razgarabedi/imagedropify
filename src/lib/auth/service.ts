@@ -118,8 +118,13 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
   try {
     const { payload } = await jose.jwtVerify(token, secret);
     return payload as SessionPayload;
-  } catch (error) {
-    // Token verification failed (expired, invalid, etc.)
+  } catch (error: any) {
+    // Log the specific error for better debugging
+    if (error instanceof jose.errors.JOSEError) {
+      console.error(`JOSE Error verifying token: ${error.code}`, error.message, error.stack);
+    } else {
+      console.error('Unexpected error verifying token:', error);
+    }
     return null;
   }
 }
@@ -133,3 +138,4 @@ export async function getCurrentUserIdFromSession(): Promise<string | null> {
   const payload = await verifySessionToken(token);
   return payload?.userId || null;
 }
+

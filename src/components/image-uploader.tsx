@@ -3,7 +3,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useActionState, startTransition } from 'react';
 import Image from 'next/image';
-import { UploadCloud, Loader2, UserX, ShieldAlert } from 'lucide-react';
+import { UploadCloud, Loader2, UserX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { uploadImage, type UploadedImageServerData } from '@/app/actions/imageActions';
 import { useAuth } from '@/hooks/use-auth'; // For checking if user is logged in on client
+import Link from 'next/link';
 
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -209,29 +210,6 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     )
   }
   
-  // JWT Secret Key Check (Development only warning for placeholder key)
-  if (process.env.NODE_ENV === 'development' && process.env.JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me') {
-    return (
-        <Card className="shadow-xl border-destructive">
-            <CardHeader>
-                <CardTitle className="text-center text-xl text-destructive flex items-center justify-center">
-                    <ShieldAlert className="mr-2 h-6 w-6"/> Security Alert
-                </CardTitle>
-                <CardDescription className="text-center text-destructive/80">
-                    JWT Secret Key is insecure. Uploads disabled in dev mode.
-                </CardDescription>
-            </CardHeader>
-            <CardContent className="p-6 text-center">
-                <p className="text-sm text-muted-foreground">
-                    Please set a strong, unique <code>JWT_SECRET_KEY</code> in your <code>.env.local</code> file.
-                    The uploader is disabled until this is configured correctly to ensure secure session management.
-                </p>
-            </CardContent>
-        </Card>
-    );
-  }
-
-
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
       <CardHeader>
@@ -294,3 +272,4 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     </Card>
   );
 }
+
