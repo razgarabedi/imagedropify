@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -46,7 +45,7 @@ function UploaderFormFields({
   clientError: string | null;
   serverError: string | null;
   isDragging: boolean;
-  pending?: boolean; // pending is passed from parent, not used internally here as useFormStatus takes over
+  pending?: boolean; 
   handleDragEnter: (e: React.DragEvent<HTMLDivElement>) => void;
   handleDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   handleDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -55,7 +54,7 @@ function UploaderFormFields({
   handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
-  const { pending: formIsSubmitting } = useFormStatus(); // Get pending state specific to form submission
+  const { pending: formIsSubmitting } = useFormStatus(); 
 
   return (
     <>
@@ -78,14 +77,14 @@ function UploaderFormFields({
       >
         <input
           type="file"
-          name="file" // Name attribute is important for FormData
+          name="file" 
           ref={fileInputRef}
           onChange={handleFileChange}
           accept={ACCEPTED_IMAGE_MIME_TYPES_STRING}
           className="hidden"
           disabled={formIsSubmitting}
         />
-        {formIsSubmitting && !previewSrc && ( // Show loader only if submitting without preview (e.g. initial submit button click)
+        {formIsSubmitting && !previewSrc && ( 
             <div className="flex flex-col items-center text-center w-full">
               <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
               <p className="text-lg font-medium text-foreground">Processing...</p>
@@ -97,14 +96,13 @@ function UploaderFormFields({
             <p className="text-sm text-muted-foreground break-all">{fileName}</p>
             <p className="text-sm text-muted-foreground">Click or drag another file to replace.</p>
           </div>
-        ) : !formIsSubmitting ? ( // Only show upload prompt if not submitting
+        ) : !formIsSubmitting ? ( 
           <div className="flex flex-col items-center text-center pointer-events-none">
             <UploadCloud className="h-12 w-12 text-primary mb-4" />
             <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
             <p className="text-sm text-muted-foreground">Max 10MB. JPG, PNG, GIF, WebP</p>
           </div>
         ) : null}
-         {/* If submitting and there's a preview, the preview is shown */}
          {formIsSubmitting && previewSrc && (
             <div className="flex flex-col items-center text-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary my-2" />
@@ -130,7 +128,7 @@ function UploaderFormFields({
 
       {previewSrc && !clientError && <SubmitButton />}
       
-      {!previewSrc && !formIsSubmitting && !clientError && ( // Don't show "Select Image" if already submitting
+      {!previewSrc && !formIsSubmitting && !clientError && ( 
           <Button onClick={triggerFileInput} className="w-full mt-6" variant="default" size="lg" type="button" disabled={formIsSubmitting}>
             <UploadCloud className="mr-2 h-5 w-5" /> Select Image
           </Button>
@@ -167,6 +165,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
+  const isInitialMount = useRef(true);
 
   const initialState: UploadImageResponse = { success: false };
   const [state, formAction] = useActionState(uploadImageAction, initialState);
@@ -182,6 +181,14 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   }, []);
 
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      // Check if 'state' is the default initial state without any actual action attempt signals (like errors populated)
+      if (state.success === false && !state.url && !state.name && !state.error && !state.errors) {
+        return; // Don't process this as a failed action on initial mount
+      }
+    }
+
     if (state?.success && state.url && state.name && previewSrc) {
       onImageUpload({ name: state.name, previewSrc: previewSrc, url: state.url });
       toast({
@@ -280,17 +287,15 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   };
 
   const triggerFileInput = () => {
-    setClientError(null);
+    setClientError(null); // Clear client error before opening file dialog
     fileInputRef.current?.click();
   };
   
   useEffect(() => {
     const currentPreview = previewSrc;
     return () => {
-      if (currentPreview && currentPreview.startsWith('blob:')) { // Check if it's a blob URL
+      if (currentPreview && currentPreview.startsWith('blob:')) { 
         URL.revokeObjectURL(currentPreview);
-      } else if (currentPreview && currentPreview.startsWith('data:')) { // Check if it's a data URL
-        // Data URLs don't need explicit revocation, but good to be aware
       }
     };
   }, [previewSrc]);
@@ -308,10 +313,9 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
           <UploaderFormFields
             previewSrc={previewSrc}
             fileName={fileName}
-            clientError={clientError}
-            serverError={serverErrorMsg}
+            clientError={clientError} // This is the ImageUploader's local clientError
+            serverError={serverErrorMsg} // This is error from server action
             isDragging={isDragging}
-            // pending={formStatus.pending} // Pass form status pending if needed by UploaderFormFields
             handleDragEnter={handleDragEnter}
             handleDragLeave={handleDragLeave}
             handleDragOver={handleDragOver}
