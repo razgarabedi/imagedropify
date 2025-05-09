@@ -14,6 +14,9 @@ export type ChartConfig = {
     icon?: React.ComponentType
   } & (
     | { color?: string; theme?: never }
+    // SECURITY NOTE: If 'color' values in 'theme' can be influenced by user input,
+    // ensure they are properly sanitized to prevent CSS injection vulnerabilities.
+    // They should strictly be valid CSS color values.
     | { color?: never; theme: Record<keyof typeof THEMES, string> }
   )
 }
@@ -76,6 +79,11 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null
   }
 
+  // SECURITY NOTE for dangerouslySetInnerHTML:
+  // The __html content is generated from `config` which should ideally be developer-defined.
+  // If any part of `config` (especially color strings) could originate from user input
+  // in the future, it MUST be rigorously sanitized to prevent XSS or CSS injection.
+  // Currently, it's assumed `config.color` and `config.theme[theme]` are safe CSS color values.
   return (
     <style
       dangerouslySetInnerHTML={{
@@ -88,6 +96,7 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color
+    // Ensure color is a valid CSS color string; if user-influenced, sanitize.
     return color ? `  --color-${key}: ${color};` : null
   })
   .join("\n")}

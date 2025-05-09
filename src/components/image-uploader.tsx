@@ -1,3 +1,13 @@
+// IMPORTANT: For a real application, the file handling and "upload" process
+// would need to occur on the server-side with robust security measures.
+// This includes:
+// 1. Validating file type and size on the server.
+// 2. Scanning files for malware.
+// 3. Storing files securely (e.g., in a cloud storage bucket).
+// 4. Generating secure, unique URLs.
+// 5. Sanitizing filenames.
+// The current implementation is a client-side simulation for demo purposes.
+
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -44,6 +54,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const handleFile = useCallback((file: File | null) => {
     if (!file) return;
 
+    // Client-side validation (should also be done on server)
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
       toast({
         variant: 'destructive',
@@ -85,6 +96,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
           setUploadProgress(currentProgress);
         } else {
           clearInterval(interval);
+          // In a real app, this URL would come from the server after successful upload & processing.
           const mockUrl = `https://imgdp.co/${Math.random().toString(36).substring(2, 8)}`;
           onImageUpload({ name: file.name, previewSrc: reader.result as string, url: mockUrl });
           toast({
@@ -147,7 +159,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   // Effect to clear preview if the uploader becomes unused
   useEffect(() => {
     return () => {
-      if (previewSrc) {
+      if (previewSrc && previewSrc.startsWith('blob:')) { // Only revoke object URLs
         URL.revokeObjectURL(previewSrc);
       }
     };
