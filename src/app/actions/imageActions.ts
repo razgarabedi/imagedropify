@@ -38,10 +38,16 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
   const resolvedUserSpecificPath = path.resolve(userSpecificPath);
   const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-  if (!resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserSpecificPath !== resolvedUploadDirBase && !resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.win32.sep)) {
+  // Check if the resolved path is outside the base public upload directory for users
+  // Allows path to be exactly resolvedUploadDirBase or start with resolvedUploadDirBase + (OS specific separator)
+  if (!(resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep) || 
+        resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.win32.sep) ||
+        resolvedUserSpecificPath === resolvedUploadDirBase)
+     ) {
       console.error(`Security alert: Attempt to create directory outside designated uploads area. Path: ${userSpecificPath}, UserID: ${userId}`);
       throw new Error('Path is outside allowed directory for user uploads.');
   }
+
 
   try {
     await fs.mkdir(userSpecificPath, { recursive: true });
@@ -151,7 +157,11 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
     const resolvedUserUploadDir = path.resolve(userUploadDir);
     const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-    if (!resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserUploadDir !== resolvedUploadDirBase && !resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ) {
+    // Check if the resolved user upload directory is safely within the base public upload directory.
+    if (!(resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) ||
+          resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
+          resolvedUserUploadDir === resolvedUploadDirBase)
+       ) {
         console.error(`Security alert: Attempt to access images outside designated user uploads area. Path: ${userUploadDir}, UserID: ${userId}`);
         return []; 
     }
@@ -169,8 +179,14 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
     for (const dirent of yearMonthDirs) {
       if (dirent.isDirectory() && dateFolderRegex.test(dirent.name)) {
         const dateFolderPath = path.join(userUploadDir, dirent.name);
-        if (!path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.sep) && !path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.win32.sep)) {
-            console.warn(`Skipping potentially malicious path: ${dateFolderPath}`);
+        const resolvedDateFolderPath = path.resolve(dateFolderPath);
+        const resolvedUserUploadDirCheck = path.resolve(userUploadDir); // For comparison
+        
+        // Ensure dateFolderPath is a direct subdirectory of userUploadDir
+        if (!(resolvedDateFolderPath.startsWith(resolvedUserUploadDirCheck + path.sep) ||
+              resolvedDateFolderPath.startsWith(resolvedUserUploadDirCheck + path.win32.sep))
+           ) {
+            console.warn(`Skipping potentially malicious path: ${dateFolderPath} as it's not a direct child of ${userUploadDir}`);
             continue;
         }
         try {
@@ -182,8 +198,12 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
                 return null;
               }
               const filePath = path.join(dateFolderPath, file);
-              if (!path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.sep) && !path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.win32.sep)) {
-                console.warn(`Skipping potentially malicious file path: ${filePath}`);
+              const resolvedFilePath = path.resolve(filePath);
+              // Ensure filePath is a direct child of dateFolderPath
+              if (!(resolvedFilePath.startsWith(resolvedDateFolderPath + path.sep) ||
+                    resolvedFilePath.startsWith(resolvedDateFolderPath + path.win32.sep))
+                 ) {
+                console.warn(`Skipping potentially malicious file path: ${filePath} as it's not a direct child of ${dateFolderPath}`);
                 return null;
               }
               try {
@@ -243,9 +263,8 @@ export async function deleteImage(
   }
 
   const normalizedFragment = path.normalize(imagePathFragment);
-  // Stricter validation for MM.YYYY/filename.ext format
   const fragmentParts = normalizedFragment.split(path.sep);
-  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1]) {
+  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1] || fragmentParts[1].includes(path.sep) || fragmentParts[1].includes(path.win32.sep) || fragmentParts[1].includes('..')) {
       console.error(`Security alert: Invalid imagePathFragment for deletion. User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
       return { success: false, error: 'Invalid image path format for deletion.' };
   }
@@ -255,7 +274,10 @@ export async function deleteImage(
   const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
   const resolvedFullPath = path.resolve(fullServerPath);
 
-  if (!resolvedFullPath.startsWith(userBaseDir + path.sep) && !resolvedFullPath.startsWith(userBaseDir + path.win32.sep)) {
+  // Ensure the resolved path is within the user's specific base directory
+  if (!(resolvedFullPath.startsWith(userBaseDir + path.sep) || 
+        resolvedFullPath.startsWith(userBaseDir + path.win32.sep))
+     ) {
       console.error(`Security alert: User ${requestingUserId} attempted to delete path outside their directory: ${fullServerPath}`);
       return { success: false, error: 'Unauthorized attempt to delete file. Path is outside your allowed directory.' };
   }
@@ -303,16 +325,14 @@ export async function renameImage(
     return { success: false, error: 'Missing current image path or new name.' };
   }
 
-  // Validate and sanitize newNameWithoutExtension
   const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH);
   if (!sanitizedNewName) {
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
 
-  // Validate currentImagePathFragment format 'MM.YYYY/oldfilename.ext'
   const normalizedFragment = path.normalize(currentImagePathFragment);
   const fragmentParts = normalizedFragment.split(path.sep);
-  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1]) {
+  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1] || fragmentParts[1].includes(path.sep) || fragmentParts[1].includes(path.win32.sep) || fragmentParts[1].includes('..')) {
     console.error(`Security alert: Invalid currentImagePathFragment for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
     return { success: false, error: 'Invalid current image path format for renaming.' };
   }
@@ -338,20 +358,21 @@ export async function renameImage(
   const resolvedOldPath = path.resolve(oldFullPath);
   const resolvedNewPath = path.resolve(newFullPath);
 
-  if (!resolvedOldPath.startsWith(userBaseDir + path.sep) || !resolvedNewPath.startsWith(userBaseDir + path.sep) &&
-      !resolvedOldPath.startsWith(userBaseDir + path.win32.sep) || !resolvedNewPath.startsWith(userBaseDir + path.win32.sep)) {
-    console.error(`Security alert: User ${requestingUserId} attempted to rename file outside their directory. Old: ${oldFullPath}, New: ${newFullPath}`);
+  // Corrected path safety check: ensure both old and new paths are within the user's directory
+  const isOldPathSafe = resolvedOldPath.startsWith(userBaseDir + path.sep);
+  const isNewPathSafe = resolvedNewPath.startsWith(userBaseDir + path.sep);
+
+  if (!isOldPathSafe || !isNewPathSafe) {
+    console.error(`Security alert: User ${requestingUserId} attempted to rename file with path outside their directory. Old: ${oldFullPath}, New: ${newFullPath}`);
     return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
   }
 
   try {
-    await fs.access(oldFullPath); // Check if old file exists
+    await fs.access(oldFullPath); 
     try {
       await fs.access(newFullPath);
-      // If newFullPath exists, it's an error, don't overwrite.
       return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this folder.` };
     } catch (e: any) {
-      // Expected: newFullPath does not exist. If error is not ENOENT, then it's some other fs issue.
       if (e.code !== 'ENOENT') throw e;
     }
 
@@ -367,7 +388,7 @@ export async function renameImage(
       success: true,
       data: {
         newId,
-        newName: newFilenameWithExt, // This is filename.ext
+        newName: newFilenameWithExt, 
         newUrl,
       },
     };
@@ -383,17 +404,18 @@ export async function renameImage(
 
 /**
  * Note on Security (Local File System):
- * - User IDs in paths: Ensure User IDs are sanitized or are non-malleable (e.g., UUIDs) to prevent path traversal. User IDs are validated against '..' and '/'.
- * - Path construction: `path.join` and `path.resolve` are used. Resolved paths are validated to be within expected base directories for the user.
+ * - User IDs in paths: User IDs from session are assumed to be non-malleable (e.g., UUIDs). Additional checks for '..' or '/' in `userId` are done where directories are created.
+ * - Path construction: `path.join` and `path.resolve` are used. Resolved paths are validated to be within expected base directories for the user using `startsWith` and OS-specific path separators.
  * - Input Sanitization: 
- *   - `imagePathFragment` for delete/rename is normalized and checked for '..', leading slashes, and expected structure.
- *   - `newNameWithoutExtension` for rename is sanitized (regexp replace) and length-limited.
+ *   - `imagePathFragment` for delete/rename is normalized and checked for '..', path separators within components, and expected structure (`MM.YYYY/filename.ext`).
+ *   - `newNameWithoutExtension` for rename is sanitized (regexp replace for allowed characters) and length-limited.
  *   - File extensions are derived from MIME types on upload or checked against a list of valid extensions for rename/delete. Original extensions are preserved on rename.
- * - File Permissions: The Node.js process (run by PM2) needs read/write permissions to `public/uploads/users`. Nginx needs read access.
+ * - File Permissions: The Node.js process (run by PM2) needs read/write permissions to `public/uploads/users/*`. Nginx needs read access to serve these files.
  * - Overwriting: The `renameImage` action checks if a file with the new name already exists and prevents overwriting.
  * - Nginx Configuration: Nginx config should:
  *   - Serve files from `/public/uploads` directly.
  *   - Disable script execution in the uploads directory.
  *   - Set `X-Content-Type-Options: nosniff`.
- * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure.
+ * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure for identifying the user.
  */
+
