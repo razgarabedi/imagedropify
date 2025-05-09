@@ -1,6 +1,6 @@
-# Firebase Studio - ImageDrop Application
+# Firebase Studio - ImageDrop Application (with Local Authentication)
 
-This is a Next.js application, ImageDrop, designed for easy image uploading and sharing. It uses Firebase for authentication and stores images locally on the server.
+This is a Next.js application, ImageDrop, designed for easy image uploading and sharing. It now uses **local authentication** (storing user data in a `users.json` file on the server - **INSECURE, FOR DEMO PURPOSES ONLY**) and stores images locally on the server. Firebase *client-side SDK might still be used for other Firebase services if configured*, but not for authentication.
 
 To get started developing locally, take a look at `src/app/page.tsx`.
 
@@ -72,28 +72,32 @@ npm install
 
 ### Step 5: Configure Environment Variables
 
-The application requires Firebase configuration to be set up via environment variables. Create a `.env.local` file in the root of your project directory (`/var/www/imagedrop/.env.local`):
+The application requires certain environment variables. Create a `.env.local` file in the root of your project directory (`/var/www/imagedrop/.env.local`):
 
 ```bash
 nano .env.local
 ```
 
-Add your Firebase project credentials to this file. **These variables are prefixed with `NEXT_PUBLIC_` because they need to be accessible on the client-side for Firebase SDK initialization.**
+Add the following variables:
 
 ```ini
-NEXT_PUBLIC_FIREBASE_API_KEY="your_firebase_api_key"
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="your_firebase_auth_domain"
-NEXT_PUBLIC_FIREBASE_PROJECT_ID="your_firebase_project_id"
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="your_firebase_storage_bucket"
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="your_firebase_messaging_sender_id"
-NEXT_PUBLIC_FIREBASE_APP_ID="your_firebase_app_id"
-# NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID="your_firebase_measurement_id" # Optional
+# For Local Authentication (JWT Sessions) - REQUIRED
+# Replace with a strong, unique secret key. Keep this private.
+JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
+
+# Optional: If using other Firebase services (e.g., Firestore, Storage directly without Firebase Auth for rules)
+# These are prefixed with NEXT_PUBLIC_ if they need to be accessible on the client-side.
+# NEXT_PUBLIC_FIREBASE_API_KEY="your_firebase_api_key_if_needed_for_other_services"
+# NEXT_PUBLIC_FIREBASE_PROJECT_ID="your_firebase_project_id_if_needed"
+# ... other Firebase config variables if you use other Firebase services ...
 ```
 
-Replace `"your_firebase_..."` with your actual Firebase project settings. You can find these in your Firebase project console: Project settings > General > Your apps > Web app.
+**CRITICAL SECURITY NOTE for `JWT_SECRET_KEY`**: The `JWT_SECRET_KEY` is vital for securing user sessions. Ensure it is a long, random, and unique string. **Do not use the default placeholder value in production.**
 
-**Important for file uploads:**
-The application saves uploaded files to `public/uploads`. This directory will be created automatically if it doesn't exist, structured as `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory if you create it manually. Typically, PM2 runs as the user who starts it. If you start PM2 as your regular user, ensure this user can write into `/var/www/imagedrop/public`.
+**Important for file uploads & local user data:**
+*   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist.
+*   **Local user data (including plain text passwords - DEMO ONLY, INSECURE)** is stored in `users.json` in the project root. Ensure this file is writable by the Node.js process (run by PM2) and **NEVER commit `users.json` to version control.** It should be in your `.gitignore` file.
+*   Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory. Typically, PM2 runs as the user who starts it. If you start PM2 as your regular user, ensure this user can write into `/var/www/imagedrop/public` and can create/write to `users.json` in `/var/www/imagedrop/`.
 
 ### Step 6: Build the Application
 
@@ -272,14 +276,18 @@ sudo certbot --nginx -d your_domain.com -d www.your_domain.com # Replace with yo
 sudo certbot renew --dry-run
 ```
 
-### Security Considerations for `/public/uploads`
+### Security Considerations for Local Setup
 
-*   **Nginx Configuration:** The provided Nginx config includes a `location /uploads/` block designed to:
-    *   Serve files directly.
-    *   Attempt to deny execution of script-like files (e.g., `.php`, `.py`).
-    *   Set `X-Content-Type-Options: nosniff` to prevent browsers from misinterpreting file types.
-*   **File Permissions:** Ensure that the `public/uploads` directory and its subdirectories are not world-writable and that the user running the Node.js/Next.js application (via PM2) only has the necessary write permissions. The Nginx user (usually `www-data`) needs read access.
-*   **Content Validation:** While not part of server setup, robust server-side validation of uploaded file types and content is crucial within the application itself (partially handled by `imageActions.ts`).
+*   **`JWT_SECRET_KEY`**: This is critical. It must be strong and kept secret.
+*   **`users.json` (DEMO ONLY)**:
+    *   **Storing passwords in plain text is extremely insecure.** This setup is for demonstration/local development only. For any real application, passwords MUST be hashed using a strong algorithm like bcrypt.
+    *   The `users.json` file should have restrictive file permissions (only writable by the Node.js process user).
+    *   **Ensure `users.json` is in your `.gitignore` and never committed to your repository.**
+*   **File Uploads (`public/uploads`)**:
+    *   Nginx Configuration: The provided Nginx config includes a `location /uploads/` block designed to serve files directly and attempt to deny script execution.
+    *   File Permissions: Ensure the `public/uploads` directory and its subdirectories are not world-writable and that the user running the Node.js/Next.js application (via PM2) only has the necessary write permissions. The Nginx user (usually `www-data`) needs read access.
+    *   Content Validation: Robust server-side validation of uploaded file types and content is crucial within the application itself (partially handled by `imageActions.ts`).
+*   **Session Management**: JWTs are stored in HTTP-only cookies, which is a good practice. Ensure HTTPS is used in production to protect session tokens in transit.
 
 ### Troubleshooting
 
@@ -289,9 +297,12 @@ sudo certbot renew --dry-run
     *   Ensure the `proxy_pass` in Nginx config points to the correct port (default `http://localhost:3000`).
 *   **Permission Denied:**
     *   For Nginx logs: Ensure `/var/log/nginx` exists and Nginx has permissions.
-    *   For application files: Ensure the user running PM2 has read access to project files and write access to `public/uploads`.
+    *   For application files: Ensure the user running PM2 has read access to project files and write access to `public/uploads` and `users.json`.
 *   **Nginx Configuration Test Fails:** Carefully review `sudo nginx -t` output for syntax errors.
-*   **Firebase Issues:** Ensure `.env.local` is correctly configured and accessible by the application. Check client-side browser console for Firebase-related errors.
+*   **Login/Signup Issues:**
+    *   Check PM2 logs for errors related to reading/writing `users.json` or JWT generation.
+    *   Ensure `JWT_SECRET_KEY` is set in `.env.local`.
+    *   Check browser console for client-side errors.
 
 ### Updating the Application
 
@@ -302,4 +313,3 @@ sudo certbot renew --dry-run
 5.  Restart the application with PM2: `pm2 restart imagedrop`
 
 Your application should now be accessible via your server's IP address or domain name.
-```

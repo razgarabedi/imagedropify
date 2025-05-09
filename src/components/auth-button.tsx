@@ -2,12 +2,9 @@
 "use client";
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase/client'; // auth can be undefined
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogIn, LogOut, UserCircle, AlertTriangle } from 'lucide-react';
+import { LogIn, LogOut, UserCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu,
@@ -17,56 +14,49 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { logoutUserAction } from '@/lib/auth/actions';
+import React from 'react';
 
 
 export function AuthButton() {
-  const { user, loading, isFirebaseAvailable } = useAuth(); 
-  const router = useRouter();
+  const { user, loading, setUser } = useAuth(); 
   const { toast } = useToast();
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
 
   const handleLogout = async () => {
-    if (!isFirebaseAvailable || !auth) {
-      toast({ variant: 'destructive', title: 'Logout Failed', description: 'Firebase authentication is not available.' });
-      return;
-    }
+    setIsLoggingOut(true);
     try {
-      await signOut(auth);
+      await logoutUserAction(); // This will redirect
+      setUser(null); // Update local context, though redirect should handle re-fetch
       toast({ title: 'Logged Out', description: "You've been successfully logged out." });
-      router.push('/'); 
+      // No router.push needed as logoutUserAction handles redirect
     } catch (error) {
       console.error('Logout failed:', error);
       toast({ variant: 'destructive', title: 'Logout Failed', description: 'Could not log you out. Please try again.' });
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
-  if (!isFirebaseAvailable && !loading) {
-    return (
-        <Button variant="outline" size="sm" disabled title="Firebase not configured. Authentication unavailable.">
-          <AlertTriangle className="mr-2 h-4 w-4 text-destructive" />
-          <span className="text-destructive">Auth Unavailable</span>
-        </Button>
-    );
-  }
-
   if (loading) {
-    return <Button variant="outline" size="sm" disabled>Loading...</Button>;
+    return <Button variant="outline" size="sm" disabled><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...</Button>;
   }
 
   if (user) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="flex items-center gap-2">
-            <UserCircle className="h-5 w-5" />
+          <Button variant="ghost" size="sm" className="flex items-center gap-2" disabled={isLoggingOut}>
+             {isLoggingOut ? <Loader2 className="h-5 w-5 animate-spin" /> : <UserCircle className="h-5 w-5" />}
             <span className="hidden sm:inline">{user.email || 'Account'}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>{user.email}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleLogout} className="text-destructive hover:!bg-destructive hover:!text-destructive-foreground cursor-pointer">
+          <DropdownMenuItem onClick={handleLogout} className="text-destructive hover:!bg-destructive hover:!text-destructive-foreground cursor-pointer" disabled={isLoggingOut}>
             <LogOut className="mr-2 h-4 w-4" />
-            Logout
+            {isLoggingOut ? 'Logging out...' : 'Logout'}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

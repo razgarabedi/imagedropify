@@ -9,6 +9,6 @@ export function useAuth() {
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-  // context now includes isFirebaseAvailable
+  // context now includes setUser and no longer includes isFirebaseAvailable
   return context;
 }

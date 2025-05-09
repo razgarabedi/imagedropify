@@ -1,22 +1,24 @@
 // src/contexts/auth-context.tsx
 "use client";
 
-import type { User as FirebaseUser } from 'firebase/auth';
-import { createContext, useEffect, useState, type ReactNode } from 'react';
-import { auth } from '@/lib/firebase/client'; // auth can be undefined
+import type { ReactNode } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { isFirebaseConfigured } from '@/lib/firebase/config';
+import type { User } from '@/lib/auth/types';
+import { getCurrentUserAction } from '@/lib/auth/actions';
 
 interface AuthContextType {
-  user: FirebaseUser | null;
+  user: User | null;
   loading: boolean;
-  isFirebaseAvailable: boolean; 
+  // isFirebaseAvailable is no longer relevant for auth, remove or rename if used for other Firebase services
+  // For simplicity, removing it from AuthContext as auth is now local.
+  setUser: React.Dispatch<React.SetStateAction<User | null>>; // Allow components to update user state (e.g., after login)
 }
 
 export const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  isFirebaseAvailable: false,
+  setUser: () => {},
 });
 
 interface AuthProviderProps {
@@ -24,26 +26,22 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isFirebaseAvailable, setIsFirebaseAvailable] = useState(false);
 
   useEffect(() => {
-    const firebaseEffectivelyAvailable = isFirebaseConfigured && !!auth;
-    setIsFirebaseAvailable(firebaseEffectivelyAvailable);
-
-    if (firebaseEffectivelyAvailable) {
-      const unsubscribe = auth.onAuthStateChanged((firebaseUser) => {
-        setUser(firebaseUser);
+    async function fetchCurrentUser() {
+      try {
+        const currentUser = await getCurrentUserAction();
+        setUser(currentUser);
+      } catch (error) {
+        console.error("Failed to fetch current user:", error);
+        setUser(null); // Ensure user is null if session check fails
+      } finally {
         setLoading(false);
-      });
-      return () => unsubscribe();
-    } else {
-      // Firebase is not configured, or auth failed to initialize
-      setUser(null);
-      setLoading(false); // Stop loading, user is effectively not logged in
-      // A warning is already logged from client.ts
+      }
     }
+    fetchCurrentUser();
   }, []);
 
   if (loading) {
@@ -55,7 +53,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, isFirebaseAvailable }}>
+    <AuthContext.Provider value={{ user, loading, setUser }}>
       {children}
     </AuthContext.Provider>
   );

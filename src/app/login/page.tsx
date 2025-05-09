@@ -1,10 +1,8 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useState, type FormEvent, useEffect } from 'react';
+import React, { useState, type FormEvent, useEffect, useActionState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword as fbCreateUser } from 'firebase/auth';
-import { auth } from '@/lib/firebase/client'; // auth can be undefined
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,111 +10,81 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useAuth } from '@/hooks/use-auth'; 
-import { AlertTriangle } from 'lucide-react';
+import { loginUserAction, signupUserAction, type AuthActionResponse } from '@/lib/auth/actions';
+import { useAuth } from '@/hooks/use-auth';
+import { Loader2 } from 'lucide-react';
+
+const initialAuthState: AuthActionResponse = { success: false };
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
-  const { isFirebaseAvailable, loading: authLoading } = useAuth(); 
-  const [showFirebaseError, setShowFirebaseError] = useState(false);
+  const { setUser } = useAuth(); // Get setUser from context to update global auth state
+
+  const [loginState, loginFormAction, isLoginPending] = useActionState(loginUserAction, initialAuthState);
+  const [signupState, signupFormAction, isSignupPending] = useActionState(signupUserAction, initialAuthState);
+  
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false); // General submitting state for button text
 
   useEffect(() => {
-    if (!authLoading && !isFirebaseAvailable) {
-      setShowFirebaseError(true);
-      setError("Firebase is not configured. Login and Signup are unavailable.");
-      toast({
-        variant: 'destructive',
-        title: 'Configuration Error',
-        description: 'Firebase authentication is currently unavailable. Please ensure the application is correctly configured.',
-        duration: 10000, // Keep it visible longer
-      });
-    } else {
-      setShowFirebaseError(false);
-    }
-  }, [isFirebaseAvailable, authLoading, toast]);
-
-
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!isFirebaseAvailable || !auth) {
-      setError('Firebase is not available. Cannot login.');
-      toast({ variant: 'destructive', title: 'Login Failed', description: 'Firebase authentication is not available.' });
-      return;
-    }
-    setError(null);
-    setIsLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
+    if (!isLoginPending && loginState.success && loginState.user) {
       toast({ title: 'Login Successful', description: "You're now logged in." });
-      router.push('/');
-    } catch (err: any) {
-      setError(err.message || 'Failed to login. Please check your credentials.');
-      toast({ variant: 'destructive', title: 'Login Failed', description: err.message || 'Please check your credentials.' });
-    } finally {
-      setIsLoading(false);
+      setUser(loginState.user); // Update global auth state
+      if (loginState.redirectTo) {
+        router.push(loginState.redirectTo);
+      } else {
+        router.push('/');
+      }
+    } else if (!isLoginPending && loginState.error) {
+      toast({ variant: 'destructive', title: 'Login Failed', description: loginState.error });
     }
-  };
-  
-  const handleSignup = async () => {
-    if (!isFirebaseAvailable || !auth) {
-      setError('Firebase is not available. Cannot sign up.');
-      toast({ variant: 'destructive', title: 'Signup Failed', description: 'Firebase authentication is not available.' });
-      return;
+    setIsSubmitting(isLoginPending);
+  }, [loginState, isLoginPending, toast, router, setUser]);
+
+  useEffect(() => {
+    if (!isSignupPending && signupState.success && signupState.user) {
+      toast({ title: 'Signup Successful', description: "Account created and you're logged in." });
+      setUser(signupState.user); // Update global auth state
+      if (signupState.redirectTo) {
+        router.push(signupState.redirectTo);
+      } else {
+        router.push('/');
+      }
+    } else if (!isSignupPending && signupState.error) {
+      toast({ variant: 'destructive', title: 'Signup Failed', description: signupState.error });
     }
-    setError(null);
-    setIsLoading(true);
-    try {
-      await fbCreateUser(auth, email, password); 
-      toast({ title: 'Signup Successful', description: "You're now logged in." });
-      router.push('/');
-    } catch (err: any) {
-        let errorMessage = 'Failed to sign up.';
-        if (err.code === 'auth/email-already-in-use') {
-            errorMessage = 'This email is already in use. Try logging in.';
-        } else if (err.code === 'auth/weak-password') {
-            errorMessage = 'Password should be at least 6 characters.';
-        } else {
-            errorMessage = err.message || errorMessage;
-        }
-        setError(errorMessage);
-        toast({ variant: 'destructive', title: 'Signup Failed', description: errorMessage });
-    } finally {
-        setIsLoading(false);
-    }
+    setIsSubmitting(isSignupPending);
+  }, [signupState, isSignupPending, toast, router, setUser]);
+
+
+  const handleLoginSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    const formData = new FormData(e.currentTarget);
+    loginFormAction(formData);
   };
 
-  if (showFirebaseError && !isFirebaseAvailable) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md shadow-2xl">
-          <CardHeader className="text-center">
-            <div className="flex justify-center mb-4">
-              <AlertTriangle className="h-12 w-12 text-destructive" />
-            </div>
-            <CardTitle className="text-2xl font-bold text-destructive">Authentication Service Unavailable</CardTitle>
-            <CardDescription>
-              Login and Signup services are currently unavailable due to a configuration issue.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Please ensure Firebase environment variables (<code>NEXT_PUBLIC_FIREBASE_*</code>) are correctly set up.
-            </p>
-          </CardContent>
-          <CardFooter>
-             <Button asChild variant="outline" className="w-full">
-                <Link href="/">Go to Home</Link>
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
-    );
-  }
+  const handleSignupSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault(); // Should not be needed if button type is not submit for signup
+    // For signup, we'll create a separate form submit or just call the action directly
+    // For simplicity, let's assume the button click directly triggers the action with current email/password
+    // This part needs to be refactored if signup is a separate form
+  };
+
+  const handleSignupClick = () => {
+    if (!email || !password) {
+        toast({ variant: 'destructive', title: 'Signup Failed', description: 'Email and password are required.' });
+        return;
+    }
+    setIsSubmitting(true);
+    const formData = new FormData();
+    formData.append('email', email);
+    formData.append('password', password);
+    signupFormAction(formData);
+  };
+
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
@@ -130,42 +98,47 @@ export default function LoginPage() {
           <CardDescription>Enter your credentials to access your images.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleLogin} className="space-y-6">
+          <form onSubmit={handleLoginSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
+                name="email"
                 type="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={isLoading || !isFirebaseAvailable || authLoading}
+                disabled={isLoginPending || isSignupPending}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
+                name="password"
                 type="password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                disabled={isLoading || !isFirebaseAvailable || authLoading}
+                disabled={isLoginPending || isSignupPending}
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={isLoading || !isFirebaseAvailable || authLoading}>
-              {isLoading ? 'Logging in...' : 'Login'}
+            { (loginState.error && !isLoginPending) && <p className="text-sm text-destructive">{loginState.error}</p>}
+            <Button type="submit" className="w-full" disabled={isLoginPending || isSignupPending}>
+              {isLoginPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isLoginPending ? 'Logging in...' : 'Login'}
             </Button>
           </form>
         </CardContent>
          <CardFooter className="flex flex-col items-center space-y-2 pt-4">
            <p className="text-sm text-muted-foreground">Don't have an account?</p>
-            <Button variant="outline" onClick={handleSignup} className="w-full" disabled={isLoading || !isFirebaseAvailable || authLoading}>
-              {isLoading ? 'Signing up...' : 'Sign Up with Email & Password'}
+            <Button variant="outline" onClick={handleSignupClick} className="w-full" disabled={isLoginPending || isSignupPending || !email || !password}>
+              {isSignupPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isSignupPending ? 'Signing up...' : 'Sign Up with Email & Password'}
             </Button>
+            { (signupState.error && !isSignupPending) && <p className="text-sm text-destructive mt-2">{signupState.error}</p>}
         </CardFooter>
       </Card>
     </div>

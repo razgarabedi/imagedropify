@@ -3,14 +3,14 @@
 
 import React, { useState, useCallback, useRef, useEffect, useActionState, startTransition } from 'react';
 import Image from 'next/image';
-import { UploadCloud, Loader2, UserX } from 'lucide-react';
+import { UploadCloud, Loader2, UserX, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { uploadImage, type UploadedImageServerData } from '@/app/actions/imageActions';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth } from '@/hooks/use-auth'; // For checking if user is logged in on client
 
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -20,14 +20,14 @@ export interface UploadedImageFile {
   name: string; // original file name
   previewSrc: string; // data URI for local preview
   url: string; // server URL for the image
-  userId: string;
+  userId: string; // ID of the user who uploaded it (from server response)
 }
 
 interface ImageUploaderProps {
   onImageUpload: (imageFile: UploadedImageFile) => void;
 }
 
-const initialState: {
+const initialUploadState: {
   success: boolean;
   data?: UploadedImageServerData;
   error?: string;
@@ -35,7 +35,7 @@ const initialState: {
 
 
 export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth(); // Get user from client-side context
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [localPreviewSrc, setLocalPreviewSrc] = useState<string | null>(null);
@@ -43,18 +43,9 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const [actionState, formAction, isPending] = useActionState(
-    async (currentState: typeof initialState, formData: FormData) => {
-      if (!user) {
-        return { success: false, error: "User not authenticated. Please login to upload." };
-      }
-      setUploadProgress(30); 
-      const result = await uploadImage(formData, user.uid);
-      setUploadProgress(100); 
-      return result;
-    },
-    initialState
-  );
+  // The uploadImage server action will get the userId from the session itself.
+  // No need to pass userId from client to the action.
+  const [actionState, formAction, isPending] = useActionState(uploadImage, initialUploadState);
 
   const resetUploaderVisualState = useCallback(() => {
     setUploadProgress(0);
@@ -77,7 +68,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         name: actionState.data.originalName,
         previewSrc: localPreviewSrc || actionState.data.url, 
         url: actionState.data.url,
-        userId: actionState.data.userId,
+        userId: actionState.data.userId, // userId comes from server response
       });
       resetUploaderVisualState();
     } else if (actionState.error) {
@@ -86,7 +77,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         title: 'Upload Failed',
         description: actionState.error,
       });
-      setUploadProgress(0); 
+      setUploadProgress(0); // Reset progress on error
     }
   }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState, localPreviewSrc]);
 
@@ -95,7 +86,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     if (!file) return;
     if (isPending) return; 
 
-    if (!user) {
+    if (!user) { // Client-side check before attempting upload
       toast({ variant: 'destructive', title: 'Authentication Required', description: 'Please login to upload images.' });
       resetUploaderVisualState();
       return;
@@ -114,7 +105,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     }
 
     setLocalFileName(file.name);
-    setUploadProgress(0); 
+    setUploadProgress(0); // Reset progress before new upload starts
 
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -122,7 +113,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
       const formData = new FormData();
       formData.append('image', file);
       startTransition(() => {
-        formAction(formData);
+        formAction(formData); // Pass only formData, action gets userId from session
       });
     };
     reader.onerror = () => {
@@ -176,6 +167,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   };
   
   useEffect(() => {
+    // Cleanup for blob URLs
     const currentPreview = localPreviewSrc;
     return () => {
       if (currentPreview && currentPreview.startsWith('blob:')) {
@@ -192,13 +184,13 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         </CardHeader>
         <CardContent className="flex flex-col items-center justify-center p-8">
           <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-          <p>Loading authentication...</p>
+          <p>Verifying authentication...</p>
         </CardContent>
       </Card>
     );
   }
   
-  if (!user) {
+  if (!user) { // If user is not logged in (after authLoading is false)
     return (
       <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
         <CardHeader>
@@ -209,10 +201,36 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
             <UserX className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-lg font-semibold text-foreground">Authentication Required</p>
             <p className="text-sm text-muted-foreground">You need to be logged in to upload images.</p>
+            <Button asChild className="mt-4">
+                <Link href="/login">Go to Login</Link>
+            </Button>
         </CardContent>
       </Card>
     )
   }
+  
+  // JWT Secret Key Check (Development only warning for placeholder key)
+  if (process.env.NODE_ENV === 'development' && process.env.JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me') {
+    return (
+        <Card className="shadow-xl border-destructive">
+            <CardHeader>
+                <CardTitle className="text-center text-xl text-destructive flex items-center justify-center">
+                    <ShieldAlert className="mr-2 h-6 w-6"/> Security Alert
+                </CardTitle>
+                <CardDescription className="text-center text-destructive/80">
+                    JWT Secret Key is insecure. Uploads disabled in dev mode.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                    Please set a strong, unique <code>JWT_SECRET_KEY</code> in your <code>.env.local</code> file.
+                    The uploader is disabled until this is configured correctly to ensure secure session management.
+                </p>
+            </CardContent>
+        </Card>
+    );
+  }
+
 
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">

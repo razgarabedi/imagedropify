@@ -24,30 +24,37 @@ import {
 } from "@/components/ui/alert-dialog"
 
 interface ImagePreviewCardProps {
-  id: string; // Combined ID like userId/MM.YYYY/filename.ext or just MM.YYYY/filename.ext if uploaderId is passed
+  id: string; // Server ID: `userId/MM.YYYY/filename.ext`
   src: string; 
   url: string; // Relative server URL e.g., /uploads/users/userId/MM.YYYY/filename.jpg
   name: string; // Original file name
-  uploaderId?: string; // The ID of the user who uploaded this image
-  onDelete?: (imageId: string) => void; // Callback after successful deletion
+  uploaderId: string; // The ID of the user who uploaded this image
+  onDelete?: (imageId: string) => void; // Callback after successful deletion, passes the server ID
 }
 
 const initialDeleteState: { success: boolean; error?: string } = { success: false };
 
 export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: ImagePreviewCardProps) {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user } = useAuth(); // Client-side user from context
   const [isCopied, setIsCopied] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [fullUrl, setFullUrl] = useState('');
 
+  // deleteImage server action gets requestingUserId from session.
+  // It needs the imagePathFragment, which is `MM.YYYY/filename.ext`.
+  // The `id` prop is `uploaderId/MM.YYYY/filename.ext`.
+  const imagePathFragmentForAction = id.substring(id.indexOf('/') + 1);
+
+
   const [deleteActionState, deleteFormAction, isDeletePending] = useActionState(
     async (currentState: typeof initialDeleteState, formData: FormData) => {
-        if (!user) return { success: false, error: "Not authenticated."};
-        // The ID prop for ImagePreviewCard is the full path fragment after /users/USER_ID/
-        // e.g., MM.YYYY/filename.ext
-        // `id` for this component is used as imagePathFragment for deleteImage
-        const result = await deleteImage(id.substring(id.indexOf('/') + 1), user.uid); 
+        // The user object from useAuth() is client-side.
+        // The deleteImage server action will verify the session on the server.
+        // We just need to pass the correct imagePathFragment.
+        const fragment = formData.get('imagePathFragment') as string;
+        if (!fragment) return { success: false, error: "Image path fragment is missing."};
+        const result = await deleteImage(fragment); 
         return result;
     },
     initialDeleteState
@@ -70,7 +77,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
             description: `${name} has been successfully deleted.`,
         });
         if (onDelete) {
-            onDelete(id); // Notify parent to remove from list
+            onDelete(id); // Notify parent with the full server ID to remove from list
         }
     } else if (!isDeletePending && deleteActionState.error) {
         toast({
@@ -99,13 +106,15 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
   };
 
   const handleDelete = () => {
-    const formData = new FormData(); // Not strictly needed if not passing form data
+    const formData = new FormData();
+    formData.append('imagePathFragment', imagePathFragmentForAction);
     startTransition(() => {
         deleteFormAction(formData);
     });
   };
 
-  const canDelete = user && uploaderId === user.uid;
+  // Check if the currently logged-in user (from client-side context) is the uploader
+  const canDelete = user && uploaderId === user.id;
 
   return (
     <Card className={cn(
@@ -134,6 +143,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={isDeletePending}>Cancel</AlertDialogCancel>
                 <AlertDialogAction onClick={handleDelete} disabled={isDeletePending} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  {isDeletePending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   {isDeletePending ? 'Deleting...' : 'Delete'}
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -145,12 +155,12 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
         <Image
           src={src} 
           alt={`Preview of ${name}`}
-          fill // Use fill for responsive images in a sized container
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" // Example sizes, adjust as needed
-          style={{objectFit: "cover"}} // Ensures image covers the area
+          fill 
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          style={{objectFit: "cover"}}
           className="transition-transform duration-300 group-hover:scale-105"
           data-ai-hint="uploaded image"
-          priority={false} // Set to true for LCP images if applicable
+          priority={false}
         />
       </CardContent>
       <CardFooter className="p-4 flex-col items-start space-y-2">
@@ -167,7 +177,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete }: I
             size="icon" 
             onClick={handleCopyUrl} 
             aria-label="Copy URL"
-            disabled={!fullUrl} 
+            disabled={!fullUrl || isCopied} 
           >
             {isCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
           </Button>
