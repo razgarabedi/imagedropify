@@ -1,3 +1,4 @@
+// src/components/image-preview-card.tsx
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -10,26 +11,44 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 interface ImagePreviewCardProps {
-  src: string;
-  url: string;
-  name: string;
+  src: string; // This is the same as url, used for Image component
+  url: string; // Relative server URL e.g., /uploads/MM.YYYY/filename.jpg
+  name: string; // Original file name
 }
 
 export function ImagePreviewCard({ src, url, name }: ImagePreviewCardProps) {
   const { toast } = useToast();
   const [isCopied, setIsCopied] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [fullUrl, setFullUrl] = useState('');
 
   useEffect(() => {
     // Trigger fade-in animation
     const timer = setTimeout(() => setIsVisible(true), 50); // Slight delay for animation
+    
+    // Construct full URL on client-side
+    if (typeof window !== 'undefined') {
+      setFullUrl(`${window.location.origin}${url}`);
+    } else {
+      // Fallback for SSR or if window is not available, though copy won't work here
+      setFullUrl(url); 
+    }
+    
     return () => clearTimeout(timer);
-  }, []);
+  }, [url]);
 
 
   const handleCopyUrl = async () => {
+    if (!fullUrl) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Full URL not available yet.',
+      });
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(fullUrl);
       toast({
         title: 'URL Copied!',
         description: 'The image URL has been copied to your clipboard.',
@@ -37,6 +56,7 @@ export function ImagePreviewCard({ src, url, name }: ImagePreviewCardProps) {
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000); // Reset icon after 2 seconds
     } catch (err) {
+      console.error('Failed to copy URL:', err);
       toast({
         variant: 'destructive',
         title: 'Copy Failed',
@@ -55,9 +75,9 @@ export function ImagePreviewCard({ src, url, name }: ImagePreviewCardProps) {
       <CardHeader className="p-4">
         <CardTitle className="text-base font-semibold truncate" title={name}>{name}</CardTitle>
       </CardHeader>
-      <CardContent className="p-0 aspect-[4/3] relative overflow-hidden">
+      <CardContent className="p-0 aspect-[4/3] relative overflow-hidden group">
         <Image
-          src={src}
+          src={src} // src should be the relative path for the Image component
           alt={`Preview of ${name}`}
           layout="fill"
           objectFit="cover"
@@ -67,11 +87,24 @@ export function ImagePreviewCard({ src, url, name }: ImagePreviewCardProps) {
       </CardContent>
       <CardFooter className="p-4 flex-col items-start space-y-2">
         <div className="flex w-full space-x-2">
-          <Input type="text" value={url} readOnly className="text-sm flex-grow min-w-0" aria-label="Image URL"/>
-          <Button variant="outline" size="icon" onClick={handleCopyUrl} aria-label="Copy URL">
+          <Input 
+            type="text" 
+            value={fullUrl || 'Loading URL...'} // Display the full URL
+            readOnly 
+            className="text-sm flex-grow min-w-0" 
+            aria-label="Image URL"
+          />
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={handleCopyUrl} 
+            aria-label="Copy URL"
+            disabled={!fullUrl} // Disable button if fullUrl is not ready
+          >
             {isCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">Relative path: {url}</p>
       </CardFooter>
     </Card>
   );
