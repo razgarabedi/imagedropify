@@ -20,36 +20,19 @@ import React from 'react';
 
 export function AuthButton() {
   const { user, loading, setUser } = useAuth(); 
-  const { toast } = useToast(); // toast is kept in case of future needs but not used for logout success
+  const { toast } = useToast(); 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
 
-  const handleLogout = () => { // Made non-async as we are not awaiting logoutUserAction in a way that its redirect error is caught
+  const handleLogout = () => { 
     setIsLoggingOut(true);
     
-    // Call the server action. It will delete the cookie and redirect.
-    // Next.js handles the redirect mechanism (which involves throwing a special error).
-    // We don't use try/catch here for the redirect itself.
     logoutUserAction().catch((error) => {
-      // This catch is for unexpected errors from logoutUserAction *before* it redirects,
-      // or if the action promise itself is rejected for other reasons.
-      // The redirect error thrown by `redirect()` is handled by Next.js and shouldn't typically reach here
-      // if `logoutUserAction` is not awaited in a way that propagates that specific error.
-      // However, if an actual operational error occurs in `logoutUserAction` (e.g., `cookies()` fails),
-      // it might be caught here.
       console.error('Logout initiation failed:', error);
       toast({ variant: 'destructive', title: 'Logout Failed', description: 'An unexpected error occurred. Please try again.' });
-      setIsLoggingOut(false); // Reset loading state on unexpected error
+      setIsLoggingOut(false); 
     });
 
-    // Optimistically update client-side auth state.
-    // The redirect will ultimately ensure the user is on the login page.
     setUser(null); 
-    
-    // A success toast is generally not needed because the user will be redirected to the login page.
-    // If the redirect is slow, setIsLoggingOut(false) might be desired, but usually, the page navigates away.
-    // For simplicity, we rely on the navigation to change the UI state.
-    // If the component is still mounted and an error didn't occur to set isLoggingOut to false,
-    // it will remain true until navigation. This is generally acceptable.
   };
 
   if (loading) {
@@ -93,3 +76,4 @@ export function AuthButton() {
     </Button>
   );
 }
+
