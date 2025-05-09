@@ -16,6 +16,7 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
+const MAX_FILENAME_LENGTH = 200; // Max length for new filename (excluding extension)
 
 
 function getFormattedDateFolder(): string {
@@ -28,16 +29,12 @@ function getFormattedDateFolder(): string {
 // Ensure upload directory (user-specific and dated subfolder) exists
 async function ensureUploadDirsExist(userId: string): Promise<string> {
   if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
-    // Basic sanity check for userId format to prevent path traversal.
-    // A more robust validation (e.g., UUID format) might be better depending on ID generation.
     console.error('Invalid User ID for directory creation:', userId);
     throw new Error('Invalid user ID format.');
   }
   const dateFolder = getFormattedDateFolder();
-  // path.join sanitizes paths and prevents simple traversal like '../'
   const userSpecificPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, dateFolder);
 
-  // Final check to ensure the path is within the allowed base directory
   const resolvedUserSpecificPath = path.resolve(userSpecificPath);
   const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
@@ -57,9 +54,9 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
 
 
 export interface UploadedImageServerData {
-  name: string; // The generated unique filename on the server
+  name: string; // The generated unique filename on the server (includes extension)
   url: string; // The public URL to access the image
-  originalName: string; // The original name of the uploaded file
+  originalName: string; // The original name of the uploaded file (includes extension)
   userId: string; // ID of the user who uploaded the image
 }
 
@@ -108,9 +105,10 @@ export async function uploadImage(
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
 
-  const safeOriginalNamePart = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 50);
-  const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}-${safeOriginalNamePart}`;
-  const filename = `${uniqueSuffix}${fileExtension}`.substring(0,255); 
+  // Sanitize original file name for suffix, but primary name is unique
+  const safeOriginalNamePart = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
+  const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+  const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0,255); 
   
   const filePath = path.join(currentActualUploadPath, filename);
   const dateFolder = getFormattedDateFolder();
@@ -120,7 +118,7 @@ export async function uploadImage(
     const imageUrl = `/uploads/users/${userId}/${dateFolder}/${filename}`;
     
     revalidatePath('/'); 
-    revalidatePath('/my-images'); // Revalidate the new page as well
+    revalidatePath('/my-images');
     
     return {
       success: true,
@@ -134,9 +132,9 @@ export async function uploadImage(
 
 
 export interface UserImage {
-  id: string; 
-  name: string; 
-  url: string;
+  id: string; // Composite ID: `userId/MM.YYYY/filename.ext`
+  name: string; // filename.ext
+  url: string; // Public URL: `/uploads/users/userId/MM.YYYY/filename.ext`
   ctime: number; 
   userId: string;
 }
@@ -194,7 +192,7 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
                 if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
                   return {
                     id: `${userId}/${dirent.name}/${file}`, 
-                    name: file,
+                    name: file, // filename.ext
                     url: `/uploads/users/${userId}/${dirent.name}/${file}`,
                     ctime: statsResult.ctimeMs,
                     userId: userId,
@@ -208,6 +206,7 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
           );
           allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
         } catch (readDirError) {
+           // Ignore if a single date folder is unreadable, continue with others.
         }
       }
     }
@@ -222,7 +221,7 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === 'ENOENT' && nodeError.path === userUploadDir) {
-      return [];
+      return []; // User directory doesn't exist yet, no images.
     }
     console.error('Failed to read or process user image directories:', error);
     return []; 
@@ -236,7 +235,7 @@ export interface DeleteImageActionState {
 
 export async function deleteImage(
   prevState: DeleteImageActionState, 
-  imagePathFragment: string 
+  imagePathFragment: string // Expects 'MM.YYYY/filename.ext'
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
@@ -244,7 +243,9 @@ export async function deleteImage(
   }
 
   const normalizedFragment = path.normalize(imagePathFragment);
-   if (normalizedFragment.includes('..') || normalizedFragment.startsWith(path.sep) || normalizedFragment.startsWith(path.win32.sep) || normalizedFragment.split(path.sep).length !== 2 && normalizedFragment.split(path.win32.sep).length !== 2) {
+  // Stricter validation for MM.YYYY/filename.ext format
+  const fragmentParts = normalizedFragment.split(path.sep);
+  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1]) {
       console.error(`Security alert: Invalid imagePathFragment for deletion. User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
       return { success: false, error: 'Invalid image path format for deletion.' };
   }
@@ -264,7 +265,7 @@ export async function deleteImage(
     await fs.unlink(fullServerPath); 
     
     revalidatePath('/'); 
-    revalidatePath('/my-images'); // Revalidate the new page as well
+    revalidatePath('/my-images');
     return { success: true };
   } catch (error: any) {
     if (error.code === 'ENOENT') {
@@ -275,16 +276,124 @@ export async function deleteImage(
   }
 }
 
+
+export interface RenameImageActionState {
+  success: boolean;
+  error?: string;
+  data?: {
+    newId: string; // new composite ID
+    newName: string; // new filename.ext
+    newUrl: string; // new public URL
+  };
+}
+
+export async function renameImage(
+  prevState: RenameImageActionState,
+  formData: FormData
+): Promise<RenameImageActionState> {
+  const requestingUserId = await getCurrentUserIdFromSession();
+  if (!requestingUserId) {
+    return { success: false, error: 'User authentication required for renaming.' };
+  }
+
+  const currentImagePathFragment = formData.get('currentImagePathFragment') as string | null;
+  const newNameWithoutExtension = formData.get('newNameWithoutExtension') as string | null;
+
+  if (!currentImagePathFragment || !newNameWithoutExtension) {
+    return { success: false, error: 'Missing current image path or new name.' };
+  }
+
+  // Validate and sanitize newNameWithoutExtension
+  const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH);
+  if (!sanitizedNewName) {
+    return { success: false, error: 'New name is invalid or empty after sanitization.' };
+  }
+
+  // Validate currentImagePathFragment format 'MM.YYYY/oldfilename.ext'
+  const normalizedFragment = path.normalize(currentImagePathFragment);
+  const fragmentParts = normalizedFragment.split(path.sep);
+  if (normalizedFragment.includes('..') || fragmentParts.length !== 2 || !/^\d{2}\.\d{4}$/.test(fragmentParts[0]) || !fragmentParts[1]) {
+    console.error(`Security alert: Invalid currentImagePathFragment for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
+    return { success: false, error: 'Invalid current image path format for renaming.' };
+  }
+  
+  const dateFolder = fragmentParts[0];
+  const oldFilenameWithExt = fragmentParts[1];
+  const extension = path.extname(oldFilenameWithExt);
+
+  if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
+    return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
+  }
+
+  const newFilenameWithExt = `${sanitizedNewName}${extension}`;
+
+  if (newFilenameWithExt === oldFilenameWithExt) {
+    return { success: false, error: 'New name is the same as the old name.' };
+  }
+  
+  const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
+  const oldFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateFolder, oldFilenameWithExt);
+  const newFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateFolder, newFilenameWithExt);
+
+  const resolvedOldPath = path.resolve(oldFullPath);
+  const resolvedNewPath = path.resolve(newFullPath);
+
+  if (!resolvedOldPath.startsWith(userBaseDir + path.sep) || !resolvedNewPath.startsWith(userBaseDir + path.sep) &&
+      !resolvedOldPath.startsWith(userBaseDir + path.win32.sep) || !resolvedNewPath.startsWith(userBaseDir + path.win32.sep)) {
+    console.error(`Security alert: User ${requestingUserId} attempted to rename file outside their directory. Old: ${oldFullPath}, New: ${newFullPath}`);
+    return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
+  }
+
+  try {
+    await fs.access(oldFullPath); // Check if old file exists
+    try {
+      await fs.access(newFullPath);
+      // If newFullPath exists, it's an error, don't overwrite.
+      return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this folder.` };
+    } catch (e: any) {
+      // Expected: newFullPath does not exist. If error is not ENOENT, then it's some other fs issue.
+      if (e.code !== 'ENOENT') throw e;
+    }
+
+    await fs.rename(oldFullPath, newFullPath);
+
+    const newUrl = `/uploads/users/${requestingUserId}/${dateFolder}/${newFilenameWithExt}`;
+    const newId = `${requestingUserId}/${dateFolder}/${newFilenameWithExt}`;
+
+    revalidatePath('/');
+    revalidatePath('/my-images');
+
+    return {
+      success: true,
+      data: {
+        newId,
+        newName: newFilenameWithExt, // This is filename.ext
+        newUrl,
+      },
+    };
+  } catch (error: any) {
+    if (error.code === 'ENOENT' && error.path === oldFullPath) {
+      return { success: false, error: 'Original file not found. It may have been deleted or moved.' };
+    }
+    console.error(`Failed to rename file from ${oldFullPath} to ${newFullPath}:`, error);
+    return { success: false, error: 'Failed to rename file on server. Please try again.' };
+  }
+}
+
+
 /**
  * Note on Security (Local File System):
- * - User IDs in paths: Ensure User IDs are sanitized or are non-malleable (e.g., UUIDs) to prevent path traversal.
- * - Path construction: Use `path.join` and `path.resolve` carefully. Always validate that resolved paths are within expected base directories.
- * - Input Sanitization: Sanitize `imagePathFragment` and any user-provided parts of file paths.
- * - File Permissions: The Node.js process (run by PM2) needs write permissions to `public/uploads/users`. Individual user directories should ideally have permissions scoped to that user if possible at the OS level (more complex setup).
- * - Nginx Configuration: The Nginx config should still:
+ * - User IDs in paths: Ensure User IDs are sanitized or are non-malleable (e.g., UUIDs) to prevent path traversal. User IDs are validated against '..' and '/'.
+ * - Path construction: `path.join` and `path.resolve` are used. Resolved paths are validated to be within expected base directories for the user.
+ * - Input Sanitization: 
+ *   - `imagePathFragment` for delete/rename is normalized and checked for '..', leading slashes, and expected structure.
+ *   - `newNameWithoutExtension` for rename is sanitized (regexp replace) and length-limited.
+ *   - File extensions are derived from MIME types on upload or checked against a list of valid extensions for rename/delete. Original extensions are preserved on rename.
+ * - File Permissions: The Node.js process (run by PM2) needs read/write permissions to `public/uploads/users`. Nginx needs read access.
+ * - Overwriting: The `renameImage` action checks if a file with the new name already exists and prevents overwriting.
+ * - Nginx Configuration: Nginx config should:
  *   - Serve files from `/public/uploads` directly.
  *   - Disable script execution in the uploads directory.
  *   - Set `X-Content-Type-Options: nosniff`.
  * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure.
  */
-

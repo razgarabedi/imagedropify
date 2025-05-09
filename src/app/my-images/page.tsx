@@ -39,8 +39,7 @@ export default function MyImagesPage() {
 
     setIsLoadingImages(true);
     try {
-      // Call getUserImages without a limit to fetch all images
-      const imagesFromServer = await getUserImages();
+      const imagesFromServer = await getUserImages(); // Fetches all images
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
         id: img.id,
         name: img.name,
@@ -60,17 +59,36 @@ export default function MyImagesPage() {
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login?message=Please login to view your images.');
-    } else if (user) {
+    } else if (user && !authLoading) { // Ensure user is loaded and not loading before fetching
       fetchAllUserImages();
     }
   }, [user, authLoading, router, fetchAllUserImages]);
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUserImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-    // Optionally, re-fetch or assume revalidation covers it
   }, []);
 
-  if (authLoading || (!user && !authLoading) ) { // Show loader if auth is loading or if redirection hasn't happened yet
+  const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
+    setUserImages((prevImages) =>
+      prevImages.map(image =>
+        image.id === oldImageId
+          ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
+          : image
+      ).sort((a, b) => { // Assuming images are sorted by ctime (fetched that way)
+          // If renaming changes ID, this sort might be tricky if ID was used for original sort.
+          // However, getUserImages sorts by ctime from server, so client sort might not be strictly needed
+          // unless local adds/deletes disrupt a ctime-based sort.
+          // For now, if newId might affect sort order and ctime isn't in DisplayImage,
+          // a re-fetch might be simplest or pass ctime through.
+          // Let's assume revalidation covers major resorting or call fetchAllUserImages()
+          return 0; // Re-fetch if strict order is critical post-rename
+      })
+    );
+    // Optionally: fetchAllUserImages(); // to get fresh sort order from server if ctime is primary sort key
+  }, []);
+
+
+  if (authLoading || (!user && !authLoading) ) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -101,7 +119,7 @@ export default function MyImagesPage() {
             My Uploaded Images
           </h2>
           <p className="mt-3 text-lg text-muted-foreground">
-            Here are all the images you've uploaded to ImageDrop.
+            Here are all the images you&apos;ve uploaded to ImageDrop.
           </p>
         </div>
         
@@ -128,7 +146,7 @@ export default function MyImagesPage() {
           <div className="text-center py-16">
             <GalleryVerticalEnd className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-6" />
             <p className="text-muted-foreground text-xl mb-4">No images found.</p>
-            <p className="text-muted-foreground text-md mb-8">Looks like you haven't uploaded any images yet.</p>
+            <p className="text-muted-foreground text-md mb-8">Looks like you haven&apos;t uploaded any images yet.</p>
             <Button asChild>
               <Link href="/">Upload Your First Image</Link>
             </Button>
@@ -144,6 +162,7 @@ export default function MyImagesPage() {
                 name={image.name}
                 uploaderId={image.uploaderId}
                 onDelete={handleImageDelete}
+                onRename={handleImageRename}
               />
             ))}
           </div>

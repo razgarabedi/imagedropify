@@ -24,11 +24,13 @@ interface DisplayImage {
   uploaderId: string; // userId of the uploader
 }
 
+const LATEST_IMAGES_COUNT = 8;
+
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [uploadedImages, setUploadedImages] = useState<DisplayImage[]>([]);
   const [isLoadingInitialImages, setIsLoadingInitialImages] = useState(true);
-  const [needsImageFetch, setNeedsImageFetch] = useState(false);
+  const [needsImageFetch, setNeedsImageFetch] = useState(true); // Start with true to fetch on initial load if authenticated
 
   const fetchUserImages = useCallback(async () => {
     if (authLoading) { 
@@ -44,7 +46,7 @@ export default function Home() {
 
     setIsLoadingInitialImages(true);
     try {
-      const userImagesFromServer = await getUserImages(8); // Fetch latest 8 images for homepage
+      const userImagesFromServer = await getUserImages(LATEST_IMAGES_COUNT); 
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id, 
         name: img.name, 
@@ -62,13 +64,10 @@ export default function Home() {
   }, [user, authLoading]); 
 
   useEffect(() => {
-    if (authLoading) {
-      setIsLoadingInitialImages(true); 
-      setNeedsImageFetch(false);    
-    } else {
+    if (!authLoading) { // Only trigger fetch if auth state is resolved
       setNeedsImageFetch(true);     
     }
-  }, [authLoading]);
+  }, [authLoading, user]); // Re-evaluate when user changes too, to fetch if user logs in/out
 
   useEffect(() => {
     if (needsImageFetch) {
@@ -78,9 +77,13 @@ export default function Home() {
   }, [needsImageFetch, fetchUserImages]); 
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
+    // Image ID format from server: `userId/MM.YYYY/filename.ext`
+    // Image URL from server: `/uploads/users/userId/MM.YYYY/filename.ext`
+    // `imageFile.name` is originalName from server, `imageFile.url` is server url, `imageFile.userId` is uploader.
+    const serverFilename = imageFile.url.split('/').pop() || imageFile.name; // Get the actual server filename
     const newImage: DisplayImage = {
-      id: `${imageFile.userId}/${imageFile.url.split('/').slice(4).join('/')}`,
-      name: imageFile.name, 
+      id: `${imageFile.userId}/${imageFile.url.split('/').slice(3).join('/')}`, // Construct ID: userId/dateFolder/filename.ext
+      name: serverFilename, 
       previewSrc: imageFile.url, 
       url: imageFile.url,
       uploaderId: imageFile.userId,
@@ -88,16 +91,34 @@ export default function Home() {
     setUploadedImages((prevImages) => {
         const updatedImages = [newImage, ...prevImages];
         const uniqueImages = updatedImages.filter((img, index, self) =>
-            index === self.findIndex((t) => t.url === img.url)
+            index === self.findIndex((t) => t.id === img.id) // Use ID for uniqueness
         );
-        return uniqueImages.slice(0, 8); // Keep last 8 images
+        return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
     });
-    setNeedsImageFetch(true); 
+    // No need to setNeedsImageFetch(true) here, as revalidation should update
+    // Or, if immediate consistency is critical, fetchUserImages() can be called.
+    // For now, rely on optimistic update and potential revalidation.
   }, []);
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-    setNeedsImageFetch(true); 
+    // Optionally setNeedsImageFetch(true) if you want to ensure the list is fully accurate from server
+    // especially if the number of images drops below LATEST_IMAGES_COUNT
+  }, []);
+  
+  const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
+    setUploadedImages((prevImages) =>
+      prevImages.map(image =>
+        image.id === oldImageId
+          ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
+          : image
+      ).sort((a, b) => { // Re-sort if ctime was part of DisplayImage and used for sorting
+          // Assuming fetchUserImages will re-sort correctly upon next fetch if needed
+          // For now, just update the item. If sorting logic is client-side and complex, adjust here.
+          return 0; // Placeholder if no client-side re-sorting based on name/id
+      })
+    );
+     // setNeedsImageFetch(true); // Trigger a re-fetch to ensure list consistency, especially order
   }, []);
   
   return (
@@ -172,7 +193,7 @@ export default function Home() {
             ) : uploadedImages.length === 0 ? (
               <div className="text-center py-10">
                 <Image src="https://picsum.photos/seed/no-images-user/200/200" alt="No images uploaded by user" width={150} height={150} className="mx-auto rounded-lg opacity-50 mb-4" data-ai-hint="empty state folder" />
-                <p className="text-muted-foreground text-lg">You haven't uploaded any images yet. Start by uploading an image above!</p>
+                <p className="text-muted-foreground text-lg">You haven&apos;t uploaded any images yet. Start by uploading an image above!</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -185,26 +206,33 @@ export default function Home() {
                     name={image.name} 
                     uploaderId={image.uploaderId}
                     onDelete={handleImageDelete}
+                    onRename={handleImageRename}
                   />
                 ))}
               </div>
             )}
+             {uploadedImages.length > 0 && uploadedImages.length >= LATEST_IMAGES_COUNT && (
+              <div className="mt-8 text-center">
+                <Button asChild variant="outline">
+                  <Link href="/my-images">View All My Images</Link>
+                </Button>
+              </div>
+            )}
           </section>
         )}
-         {authLoading && (
-            <div className="flex justify-center items-center py-16">
-                 <Skeleton className="h-12 w-12 rounded-full" />
-                 <p className="ml-4 text-muted-foreground">Loading your images...</p>
+         {authLoading && ( // Show this loader only when auth is loading, not necessarily image loading
+            <div className="flex flex-col justify-center items-center py-16">
+                 <Skeleton className="h-12 w-12 rounded-full mb-4" />
+                 <Skeleton className="h-6 w-48" />
             </div>
         )}
       </main>
 
       <footer className="py-8 text-center text-muted-foreground border-t">
-        <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it's a demo!).</p>
-         <p className="text-xs mt-1">Note: User-specific image directories are created under 'public/uploads/users/'.</p>
+        <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
+         <p className="text-xs mt-1">Note: User-specific image directories are created under &apos;public/uploads/users/&apos;.</p>
          <p className="text-xs mt-1">Users are stored in users.json (demo only, insecure).</p>
       </footer>
     </div>
   );
 }
-
