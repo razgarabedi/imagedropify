@@ -24,7 +24,10 @@ export interface AuthActionResponse {
   redirectTo?: string;
 }
 
-export async function loginUserAction(formData: FormData): Promise<AuthActionResponse> {
+export async function loginUserAction(
+  prevState: AuthActionResponse, // Added prevState parameter
+  formData: FormData
+): Promise<AuthActionResponse> {
   const emailValue = formData.get('email');
   const passwordValue = formData.get('password');
 
@@ -64,7 +67,10 @@ export async function loginUserAction(formData: FormData): Promise<AuthActionRes
   }
 }
 
-export async function signupUserAction(formData: FormData): Promise<AuthActionResponse> {
+export async function signupUserAction(
+  prevState: AuthActionResponse, // Added prevState parameter
+  formData: FormData
+): Promise<AuthActionResponse> {
   const emailValue = formData.get('email');
   const passwordValue = formData.get('password');
 
