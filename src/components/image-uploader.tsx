@@ -1,122 +1,245 @@
-// IMPORTANT: For a real application, the file handling and "upload" process
-// would need to occur on the server-side with robust security measures.
-// This includes:
-// 1. Validating file type and size on the server.
-// 2. Scanning files for malware.
-// 3. Storing files securely (e.g., in a cloud storage bucket).
-// 4. Generating secure, unique URLs.
-// 5. Sanitizing filenames.
-// The current implementation is a client-side simulation for demo purposes.
-
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Image from 'next/image';
-import { UploadCloud, FileWarning, Loader2 } from 'lucide-react';
+import { UploadCloud, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { uploadImageAction, type UploadImageResponse } from '@/app/actions/upload-actions';
+import { useFormState, useFormStatus } from 'react-dom';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_IMAGE_MIME_TYPES_STRING = 'image/jpeg,image/png,image/gif,image/webp';
+const ACCEPTED_IMAGE_MIME_TYPES_ARRAY = ACCEPTED_IMAGE_MIME_TYPES_STRING.split(',');
+
 
 export interface UploadedImageFile {
   name: string;
-  previewSrc: string;
-  url: string;
+  previewSrc: string; // This will be a data URL for client-side preview
+  url: string; // This will be the server URL
 }
 
 interface ImageUploaderProps {
   onImageUpload: (imageFile: UploadedImageFile) => void;
 }
 
+function UploaderFormFields({ 
+  previewSrc, 
+  fileName, 
+  clientError,
+  serverError,
+  isDragging,
+  pending,
+  handleDragEnter,
+  handleDragLeave,
+  handleDragOver,
+  handleDrop,
+  triggerFileInput,
+  handleFileChange,
+  fileInputRef
+} : {
+  previewSrc: string | null;
+  fileName: string | null;
+  clientError: string | null;
+  serverError: string | null;
+  isDragging: boolean;
+  pending: boolean;
+  handleDragEnter: (e: React.DragEvent<HTMLDivElement>) => void;
+  handleDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
+  handleDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
+  handleDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+  triggerFileInput: () => void;
+  handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  fileInputRef: React.RefObject<HTMLInputElement>;
+}) {
+  const { pending: formIsSubmitting } = useFormStatus(); // Get pending state specific to form submission
+
+  return (
+    <>
+      <div
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        onClick={formIsSubmitting ? undefined : triggerFileInput}
+        className={cn(
+          'flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg transition-colors duration-200 ease-in-out',
+          isDragging ? 'border-primary bg-accent/10' : 'border-border hover:border-primary/70',
+          formIsSubmitting ? 'cursor-default opacity-70' : 'cursor-pointer',
+          (clientError || serverError) && 'border-destructive'
+        )}
+        role="button"
+        aria-label="Image upload area"
+        tabIndex={formIsSubmitting ? -1 : 0}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !formIsSubmitting) triggerFileInput(); }}
+      >
+        <input
+          type="file"
+          name="file" // Name attribute is important for FormData
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept={ACCEPTED_IMAGE_MIME_TYPES_STRING}
+          className="hidden"
+          disabled={formIsSubmitting}
+        />
+        {formIsSubmitting && !previewSrc && ( // Show loader only if submitting without preview (e.g. initial submit button click)
+            <div className="flex flex-col items-center text-center w-full">
+              <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+              <p className="text-lg font-medium text-foreground">Processing...</p>
+            </div>
+        )}
+        {!formIsSubmitting && previewSrc && !clientError ? (
+          <div className="flex flex-col items-center text-center">
+            <Image src={previewSrc} alt="Image preview" width={150} height={150} className="rounded-md object-contain max-h-[150px] mb-4 shadow-md" data-ai-hint="image preview" />
+            <p className="text-sm text-muted-foreground break-all">{fileName}</p>
+            <p className="text-sm text-muted-foreground">Click or drag another file to replace.</p>
+          </div>
+        ) : !formIsSubmitting ? ( // Only show upload prompt if not submitting
+          <div className="flex flex-col items-center text-center pointer-events-none">
+            <UploadCloud className="h-12 w-12 text-primary mb-4" />
+            <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
+            <p className="text-sm text-muted-foreground">Max 10MB. JPG, PNG, GIF, WebP</p>
+          </div>
+        ) : null}
+         {/* If submitting and there's a preview, the preview is shown */}
+         {formIsSubmitting && previewSrc && (
+            <div className="flex flex-col items-center text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary my-2" />
+                <Image src={previewSrc} alt="Image preview" width={100} height={100} className="rounded-md object-contain max-h-[100px] mb-2 shadow-md opacity-50" data-ai-hint="image preview loading" />
+                <p className="text-sm text-muted-foreground">Uploading {fileName}...</p>
+            </div>
+        )}
+      </div>
+
+      {clientError && (
+        <div className="p-3 bg-destructive/10 border border-destructive text-destructive text-sm rounded-md flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          <p>{clientError}</p>
+        </div>
+      )}
+      
+      {serverError && (
+        <div className="p-3 bg-destructive/10 border border-destructive text-destructive text-sm rounded-md flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          <p>{serverError}</p>
+        </div>
+      )}
+
+      {previewSrc && !clientError && <SubmitButton />}
+      
+      {!previewSrc && !formIsSubmitting && !clientError && ( // Don't show "Select Image" if already submitting
+          <Button onClick={triggerFileInput} className="w-full mt-6" variant="default" size="lg" type="button" disabled={formIsSubmitting}>
+            <UploadCloud className="mr-2 h-5 w-5" /> Select Image
+          </Button>
+        )}
+    </>
+  );
+}
+
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" className="w-full mt-4" variant="default" size="lg" disabled={pending}>
+      {pending ? (
+        <>
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Uploading...
+        </>
+      ) : (
+        <>
+         <UploadCloud className="mr-2 h-5 w-5" /> Confirm and Upload
+        </>
+      )}
+    </Button>
+  );
+}
+
+
 export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [clientError, setClientError] = useState<string | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const { toast } = useToast();
 
-  const resetState = () => {
-    setIsLoading(false);
-    setUploadProgress(0);
+  const initialState: UploadImageResponse = { success: false };
+  const [state, formAction] = useFormState(uploadImageAction, initialState);
+  // Note: useFormStatus().pending can't be used here directly, it must be in a component descendant of <form>
+  // So, we pass a general 'pending' derived from state if needed, or rely on SubmitButton's internal status.
+
+  const resetClientState = useCallback(() => {
     setPreviewSrc(null);
     setFileName(null);
+    setClientError(null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = ''; // Reset file input
+      fileInputRef.current.value = '';
     }
-  };
+    // Reset server action state by re-setting the form, or specific logic if needed
+    // For now, formRef.current?.reset() handles client form fields. Server state handled by new submissions.
+  }, []);
 
-  const handleFile = useCallback((file: File | null) => {
-    if (!file) return;
-
-    // Client-side validation (should also be done on server)
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+  useEffect(() => {
+    if (state?.success && state.url && state.name && previewSrc) {
+      onImageUpload({ name: state.name, previewSrc: previewSrc, url: state.url });
+      toast({
+        title: 'Image Uploaded!',
+        description: `${state.name} is now available. URL: ${state.url}`,
+      });
+      resetClientState();
+      formRef.current?.reset(); 
+    } else if (state && !state.success) {
+      const errorMsg = state.error || state.errors?._form?.join(', ') || state.errors?.file?.join(', ') || 'Upload failed. Please try again.';
+      // Set client error to display server validation messages through the same mechanism
+      setClientError(errorMsg); 
       toast({
         variant: 'destructive',
-        title: 'Invalid File Type',
-        description: `Please upload a JPG, PNG, GIF, or WebP image. You tried: ${file.type}`,
+        title: 'Upload Failed',
+        description: errorMsg,
       });
-      resetState();
+    }
+  }, [state, onImageUpload, toast, resetClientState, previewSrc]);
+
+
+  const handleFileSelected = useCallback((file: File | null) => {
+    setClientError(null); 
+    if (!file) {
+      // If no file is selected (e.g., user cancels file dialog), reset preview
+      setPreviewSrc(null);
+      setFileName(null);
+      if (fileInputRef.current) {
+          fileInputRef.current.value = ''; // Clear the file input
+      }
       return;
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      toast({
-        variant: 'destructive',
-        title: 'File Too Large',
-        description: `File size cannot exceed 10MB. Your file is ${(file.size / (1024*1024)).toFixed(2)}MB.`,
-      });
-      resetState();
+    if (!ACCEPTED_IMAGE_MIME_TYPES_ARRAY.includes(file.type)) {
+      setClientError(`Invalid file type. Please upload JPG, PNG, GIF, or WebP. You provided: ${file.type}`);
+      resetClientState(); // Clear preview and file name
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setClientError(`File too large (max 10MB). Your file is ${(file.size / (1024*1024)).toFixed(2)}MB.`);
+      resetClientState();
       return;
     }
 
     setFileName(file.name);
-    setIsLoading(true);
-    setUploadProgress(0);
-
     const reader = new FileReader();
-    reader.onprogress = (event) => {
-      if (event.lengthComputable) {
-        const progress = Math.round((event.loaded / event.total) * 50); // Reading is 50%
-        setUploadProgress(progress);
-      }
-    };
     reader.onloadend = () => {
       setPreviewSrc(reader.result as string);
-      // Simulate upload
-      let currentProgress = 50;
-      const interval = setInterval(() => {
-        currentProgress += 10;
-        if (currentProgress <= 100) {
-          setUploadProgress(currentProgress);
-        } else {
-          clearInterval(interval);
-          // In a real app, this URL would come from the server after successful upload & processing.
-          const mockUrl = `https://imgdp.co/${Math.random().toString(36).substring(2, 8)}`;
-          onImageUpload({ name: file.name, previewSrc: reader.result as string, url: mockUrl });
-          toast({
-            title: 'Image Uploaded!',
-            description: `${file.name} is now ready.`,
-          });
-          resetState(); 
-        }
-      }, 150);
     };
     reader.onerror = () => {
-      toast({
-        variant: 'destructive',
-        title: 'Error Reading File',
-        description: 'Could not read the selected file.',
-      });
-      resetState();
+      setClientError('Error reading file for preview.');
+      resetClientState();
     };
     reader.readAsDataURL(file);
-  }, [onImageUpload, toast]);
+  }, [resetClientState]);
 
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -133,7 +256,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) setIsDragging(true); // Ensure it's set if not already
+    if (!isDragging) setIsDragging(true);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -141,29 +264,43 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     e.stopPropagation();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      if (fileInputRef.current) {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInputRef.current.files = dataTransfer.files;
+        // Manually trigger change event for React Hook Form or state updates if needed
+        // For controlled components, this might require dispatching an event.
+        // For uncontrolled with `name="file"`, this should be fine for FormData.
+      }
+      handleFileSelected(file); // This will set previewSrc, fileName, and clientError
       e.dataTransfer.clearData();
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      handleFile(e.target.files[0]);
+      handleFileSelected(e.target.files[0]);
+    } else {
+      handleFileSelected(null); 
     }
   };
 
   const triggerFileInput = () => {
+    setClientError(null);
     fileInputRef.current?.click();
   };
   
-  // Effect to clear preview if the uploader becomes unused
   useEffect(() => {
+    const currentPreview = previewSrc;
     return () => {
-      if (previewSrc && previewSrc.startsWith('blob:')) { // Only revoke object URLs
-        URL.revokeObjectURL(previewSrc);
+      if (currentPreview && currentPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(currentPreview);
       }
     };
   }, [previewSrc]);
+
+  const serverErrorMsg = state && !state.success ? (state.error || state.errors?._form?.join(', ') || state.errors?.file?.join(', ')) : null;
 
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
@@ -172,56 +309,23 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         <CardDescription className="text-center">Drag & drop or click to select a file.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          onClick={!isLoading ? triggerFileInput : undefined} // Prevent click during loading
-          className={cn(
-            'flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 ease-in-out',
-            isDragging ? 'border-primary bg-accent/10' : 'border-border hover:border-primary/70',
-            isLoading ? 'cursor-default opacity-70' : ''
-          )}
-          role="button"
-          aria-label="Image upload area"
-          tabIndex={isLoading ? -1 : 0}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !isLoading) triggerFileInput(); }}
-        >
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept={ACCEPTED_IMAGE_TYPES.join(',')}
-            className="hidden"
-            disabled={isLoading}
+        <form action={formAction} ref={formRef} className="space-y-4">
+          <UploaderFormFields
+            previewSrc={previewSrc}
+            fileName={fileName}
+            clientError={clientError}
+            serverError={serverErrorMsg}
+            isDragging={isDragging}
+            pending={false} // General pending state for UI, form specific handled by useFormStatus in children
+            handleDragEnter={handleDragEnter}
+            handleDragLeave={handleDragLeave}
+            handleDragOver={handleDragOver}
+            handleDrop={handleDrop}
+            triggerFileInput={triggerFileInput}
+            handleFileChange={handleFileChange}
+            fileInputRef={fileInputRef}
           />
-          {isLoading ? (
-            <div className="flex flex-col items-center text-center w-full">
-              <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-              <p className="text-lg font-medium text-foreground">Uploading {fileName && `"${fileName}"`}</p>
-              <Progress value={uploadProgress} className="w-full mt-2 h-2" />
-              <p className="text-sm text-muted-foreground mt-1">{uploadProgress}%</p>
-            </div>
-          ) : previewSrc ? (
-            <div className="flex flex-col items-center text-center">
-              <Image src={previewSrc} alt="Image preview" width={150} height={150} className="rounded-md object-contain max-h-[150px] mb-4 shadow-md" />
-              <p className="text-sm text-muted-foreground">{fileName}</p>
-              <p className="text-sm text-muted-foreground">Click or drag another file to replace.</p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center text-center pointer-events-none">
-              <UploadCloud className="h-12 w-12 text-primary mb-4" />
-              <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
-              <p className="text-sm text-muted-foreground">Max 10MB. JPG, PNG, GIF, WebP</p>
-            </div>
-          )}
-        </div>
-        {!isLoading && !previewSrc && (
-          <Button onClick={triggerFileInput} className="w-full mt-6" variant="default" size="lg" disabled={isLoading}>
-            <UploadCloud className="mr-2 h-5 w-5" /> Select Image
-          </Button>
-        )}
+        </form>
       </CardContent>
     </Card>
   );
