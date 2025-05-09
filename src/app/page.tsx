@@ -28,21 +28,27 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [uploadedImages, setUploadedImages] = useState<DisplayImage[]>([]);
   const [isLoadingInitialImages, setIsLoadingInitialImages] = useState(true);
+  const [needsImageFetch, setNeedsImageFetch] = useState(false);
 
   const fetchUserImages = useCallback(async () => {
-    if (!user) { // User must be logged in to see their images
+    // This guard is important because this function might be called
+    // when authLoading is false but user might still be null (logged out)
+    // or just became available.
+    if (authLoading) { // Should not proceed if auth is still loading.
+        setIsLoadingInitialImages(true); // Reflect loading state.
+        return;
+    }
+
+    if (!user) { 
       setUploadedImages([]);
       setIsLoadingInitialImages(false);
       return;
     }
+
     setIsLoadingInitialImages(true);
     try {
-      // getUserImages now gets userId from session internally
       const userImagesFromServer = await getUserImages(); 
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
-        // id for ImagePreviewCard is "userId/MM.YYYY/filename.ext"
-        // but deleteImage action expects "MM.YYYY/filename.ext"
-        // The ImagePreviewCard will handle stripping the userId part if needed for deletion
         id: img.id, 
         name: img.name, 
         previewSrc: img.url,
@@ -52,54 +58,54 @@ export default function Home() {
       setUploadedImages(displayImages);
     } catch (error) {
       console.error("Failed to fetch user images:", error);
-      // Potentially show a toast to the user
+      setUploadedImages([]); // Clear images on error
     } finally {
       setIsLoadingInitialImages(false);
     }
-  }, [user]); // Depend on user object
+  }, [user, authLoading]); // Include authLoading
 
   useEffect(() => {
-    // Fetch images when auth state is resolved (not loading) and user exists
-    if (!authLoading) {
-      fetchUserImages();
+    if (authLoading) {
+      setIsLoadingInitialImages(true); // Set loading if auth is in progress
+      setNeedsImageFetch(false);    // Don't need to fetch if auth is loading
+    } else {
+      // Auth is resolved
+      setNeedsImageFetch(true);     // Signal that we might need to fetch images
     }
-  }, [authLoading, user, fetchUserImages]); // Add user to dependencies
+  }, [authLoading]);
+
+  useEffect(() => {
+    // This effect runs when `needsImageFetch` becomes true (after auth is resolved)
+    // or when `user` changes (which changes `fetchUserImages` reference).
+    if (needsImageFetch) {
+      fetchUserImages();
+      setNeedsImageFetch(false); // Reset the trigger after initiating fetch
+    }
+  }, [needsImageFetch, fetchUserImages]); // fetchUserImages depends on user & authLoading
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    // imageFile.url is like /uploads/users/USER_ID/MM.YYYY/filename.ext
-    // imageFile.userId is the uploader's ID
-    // The ID for ImagePreviewCard should be unique for the key prop and useful for deletion.
-    // For deletion, we need "MM.YYYY/filename.ext" relative to the user's folder.
-    // The server UserImage.id is `userId/MM.YYYY/filename.ext`
-    
+    // Optimistically add, then re-fetch for consistency.
     const newImage: DisplayImage = {
-      id: `${imageFile.userId}/${imageFile.url.split('/').slice(4).join('/')}`, // Reconstruct server-like ID
+      id: `${imageFile.userId}/${imageFile.url.split('/').slice(4).join('/')}`,
       name: imageFile.name, 
       previewSrc: imageFile.url, 
       url: imageFile.url,
       uploaderId: imageFile.userId,
     };
-
     setUploadedImages((prevImages) => {
-      // Add new image and then re-fetch to get the last 5 sorted by ctime from server
-      // For immediate feedback, add locally, then trigger a re-fetch.
-      fetchUserImages(); // Re-fetch to ensure we have the correct last 5
-      
-      // Optimistic update (optional, fetchUserImages will overwrite)
-      const updatedImages = [newImage, ...prevImages];
-      const uniqueImages = updatedImages.filter((img, index, self) =>
-        index === self.findIndex((t) => t.url === img.url)
-      );
-      return uniqueImages.slice(0, 5); 
+        const updatedImages = [newImage, ...prevImages];
+        const uniqueImages = updatedImages.filter((img, index, self) =>
+            index === self.findIndex((t) => t.url === img.url)
+        );
+        return uniqueImages.slice(0, 5);
     });
-  }, [fetchUserImages]);
+    setNeedsImageFetch(true); // Trigger a re-fetch to get the latest sorted 5 from server
+  }, []);
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
-    // deletedImageId is the full `userId/MM.YYYY/filename.ext`
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-    // Optionally, re-fetch images to ensure consistency if deletion might affect sorting/count
-    fetchUserImages();
-  }, [fetchUserImages]);
+    setNeedsImageFetch(true); // Trigger a re-fetch
+  }, []);
   
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -128,7 +134,6 @@ export default function Home() {
               </p>
             </div>
             <div className="mt-10 max-w-2xl mx-auto">
-              {/* ImageUploader internally uses user from session for uploadImage action */}
               <ImageUploader onImageUpload={handleImageUpload} />
             </div>
           </section>
@@ -147,9 +152,10 @@ export default function Home() {
           </section>
         )}
 
-        {user && <Separator className="my-12" />}
+        {/* Show skeleton or gallery only if auth is resolved */}
+        {!authLoading && user && <Separator className="my-12" />}
         
-        {user && (
+        {!authLoading && user && (
           <section aria-labelledby="gallery-title">
             <h2 id="gallery-title" className="text-2xl font-semibold text-foreground mb-6 text-center sm:text-left">
               Your Latest Uploaded Images
@@ -180,7 +186,7 @@ export default function Home() {
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.map((image) => (
                   <ImagePreviewCard 
-                    key={image.id} // This id is `userId/MM.YYYY/filename.ext`
+                    key={image.id}
                     id={image.id} 
                     src={image.previewSrc} 
                     url={image.url} 
@@ -192,6 +198,13 @@ export default function Home() {
               </div>
             )}
           </section>
+        )}
+         {/* Show a loader for the whole page content if auth is loading, to prevent content flashing */}
+         {authLoading && (
+            <div className="flex justify-center items-center py-16">
+                 <Skeleton className="h-12 w-12 rounded-full" />
+                 <p className="ml-4 text-muted-foreground">Loading your images...</p>
+            </div>
         )}
       </main>
 
