@@ -31,11 +31,8 @@ export default function Home() {
   const [needsImageFetch, setNeedsImageFetch] = useState(false);
 
   const fetchUserImages = useCallback(async () => {
-    // This guard is important because this function might be called
-    // when authLoading is false but user might still be null (logged out)
-    // or just became available.
-    if (authLoading) { // Should not proceed if auth is still loading.
-        setIsLoadingInitialImages(true); // Reflect loading state.
+    if (authLoading) { 
+        setIsLoadingInitialImages(true); 
         return;
     }
 
@@ -58,33 +55,29 @@ export default function Home() {
       setUploadedImages(displayImages);
     } catch (error) {
       console.error("Failed to fetch user images:", error);
-      setUploadedImages([]); // Clear images on error
+      setUploadedImages([]); 
     } finally {
       setIsLoadingInitialImages(false);
     }
-  }, [user, authLoading]); // Include authLoading
+  }, [user, authLoading]); 
 
   useEffect(() => {
     if (authLoading) {
-      setIsLoadingInitialImages(true); // Set loading if auth is in progress
-      setNeedsImageFetch(false);    // Don't need to fetch if auth is loading
+      setIsLoadingInitialImages(true); 
+      setNeedsImageFetch(false);    
     } else {
-      // Auth is resolved
-      setNeedsImageFetch(true);     // Signal that we might need to fetch images
+      setNeedsImageFetch(true);     
     }
   }, [authLoading]);
 
   useEffect(() => {
-    // This effect runs when `needsImageFetch` becomes true (after auth is resolved)
-    // or when `user` changes (which changes `fetchUserImages` reference).
     if (needsImageFetch) {
       fetchUserImages();
-      setNeedsImageFetch(false); // Reset the trigger after initiating fetch
+      setNeedsImageFetch(false); 
     }
-  }, [needsImageFetch, fetchUserImages]); // fetchUserImages depends on user & authLoading
+  }, [needsImageFetch, fetchUserImages]); 
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    // Optimistically add, then re-fetch for consistency.
     const newImage: DisplayImage = {
       id: `${imageFile.userId}/${imageFile.url.split('/').slice(4).join('/')}`,
       name: imageFile.name, 
@@ -97,14 +90,14 @@ export default function Home() {
         const uniqueImages = updatedImages.filter((img, index, self) =>
             index === self.findIndex((t) => t.url === img.url)
         );
-        return uniqueImages.slice(0, 5);
+        return uniqueImages.slice(0, 8); // Keep last 8 images
     });
-    setNeedsImageFetch(true); // Trigger a re-fetch to get the latest sorted 5 from server
+    setNeedsImageFetch(true); 
   }, []);
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-    setNeedsImageFetch(true); // Trigger a re-fetch
+    setNeedsImageFetch(true); 
   }, []);
   
   return (
@@ -152,7 +145,6 @@ export default function Home() {
           </section>
         )}
 
-        {/* Show skeleton or gallery only if auth is resolved */}
         {!authLoading && user && <Separator className="my-12" />}
         
         {!authLoading && user && (
@@ -199,7 +191,6 @@ export default function Home() {
             )}
           </section>
         )}
-         {/* Show a loader for the whole page content if auth is loading, to prevent content flashing */}
          {authLoading && (
             <div className="flex justify-center items-center py-16">
                  <Skeleton className="h-12 w-12 rounded-full" />

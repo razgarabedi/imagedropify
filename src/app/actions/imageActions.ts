@@ -70,7 +70,7 @@ export interface UploadImageActionState {
 }
 
 export async function uploadImage(
-  prevState: UploadImageActionState, // Added prevState parameter
+  prevState: UploadImageActionState, 
   formData: FormData
 ): Promise<UploadImageActionState> {
   const userId = await getCurrentUserIdFromSession();
@@ -108,11 +108,9 @@ export async function uploadImage(
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
 
-  // Sanitize original file name for use in unique suffix if desired, or just use random data
-  // For simplicity, using random data is safer.
   const safeOriginalNamePart = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 50);
   const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}-${safeOriginalNamePart}`;
-  const filename = `${uniqueSuffix}${fileExtension}`.substring(0,255); // Ensure filename length is reasonable
+  const filename = `${uniqueSuffix}${fileExtension}`.substring(0,255); 
   
   const filePath = path.join(currentActualUploadPath, filename);
   const dateFolder = getFormattedDateFolder();
@@ -151,23 +149,20 @@ export async function getUserImages(): Promise<UserImage[]> {
   const userUploadDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userId);
 
   try {
-    // Check if user's base upload directory exists and is accessible.
-    // path.resolve helps normalize the path.
     const resolvedUserUploadDir = path.resolve(userUploadDir);
     const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
     if (!resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) && resolvedUserUploadDir !== resolvedUploadDirBase && !resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ) {
         console.error(`Security alert: Attempt to access images outside designated user uploads area. Path: ${userUploadDir}, UserID: ${userId}`);
-        return []; // Path is outside allowed directory
+        return []; 
     }
     await fs.access(resolvedUserUploadDir); 
   } catch (error) {
-    // User directory doesn't exist, or access error so no images to list.
     return []; 
   }
 
   const allImages: UserImage[] = [];
-  const dateFolderRegex = /^\d{2}\.\d{4}$/; // Matches MM.YYYY format
+  const dateFolderRegex = /^\d{2}\.\d{4}$/; 
 
   try {
     const yearMonthDirs = await fs.readdir(userUploadDir, { withFileTypes: true });
@@ -175,7 +170,6 @@ export async function getUserImages(): Promise<UserImage[]> {
     for (const dirent of yearMonthDirs) {
       if (dirent.isDirectory() && dateFolderRegex.test(dirent.name)) {
         const dateFolderPath = path.join(userUploadDir, dirent.name);
-        // Security: ensure dateFolderPath is still within userUploadDir
         if (!path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.sep) && !path.resolve(dateFolderPath).startsWith(path.resolve(userUploadDir) + path.win32.sep)) {
             console.warn(`Skipping potentially malicious path: ${dateFolderPath}`);
             continue;
@@ -184,13 +178,11 @@ export async function getUserImages(): Promise<UserImage[]> {
           const filesInDateFolder = await fs.readdir(dateFolderPath);
           const imageFileDetails = await Promise.all(
             filesInDateFolder.map(async (file) => {
-              // Sanitize file name before joining: basic check for traversal
               if (file.includes('..') || file.includes('/') || file.includes(path.win32.sep)) {
                 console.warn(`Skipping potentially malicious file name: ${file}`);
                 return null;
               }
               const filePath = path.join(dateFolderPath, file);
-              // Security: ensure filePath is still within dateFolderPath
               if (!path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.sep) && !path.resolve(filePath).startsWith(path.resolve(dateFolderPath) + path.win32.sep)) {
                 console.warn(`Skipping potentially malicious file path: ${filePath}`);
                 return null;
@@ -208,7 +200,6 @@ export async function getUserImages(): Promise<UserImage[]> {
                   };
                 }
               } catch (statError) {
-                // console.error(`Failed to stat file ${filePath}:`, statError); // Can be noisy
                 return null;
               }
               return null;
@@ -216,13 +207,12 @@ export async function getUserImages(): Promise<UserImage[]> {
           );
           allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
         } catch (readDirError) {
-          // console.warn(`Could not read directory ${dateFolderPath}:`, readDirError); // Can be noisy
         }
       }
     }
 
     allImages.sort((a, b) => b.ctime - a.ctime);
-    return allImages.slice(0, 5); // Return last 5 uploaded photos
+    return allImages.slice(0, 8); // Return last 8 uploaded photos
 
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
@@ -240,16 +230,14 @@ export interface DeleteImageActionState {
 }
 
 export async function deleteImage(
-  prevState: DeleteImageActionState, // Added prevState
-  imagePathFragment: string // e.g., MM.YYYY/filename.ext (relative to user's dir)
+  prevState: DeleteImageActionState, 
+  imagePathFragment: string 
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
     return { success: false, error: 'User authentication required for deletion.' };
   }
 
-  // Validate imagePathFragment to prevent path traversal.
-  // It should not contain '..' or start with '/'. It should be 'MM.YYYY/filename.ext'.
   const normalizedFragment = path.normalize(imagePathFragment);
    if (normalizedFragment.includes('..') || normalizedFragment.startsWith(path.sep) || normalizedFragment.startsWith(path.win32.sep) || normalizedFragment.split(path.sep).length !== 2 && normalizedFragment.split(path.win32.sep).length !== 2) {
       console.error(`Security alert: Invalid imagePathFragment for deletion. User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
@@ -258,7 +246,6 @@ export async function deleteImage(
 
   const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, normalizedFragment);
   
-  // Security check: Ensure the path being deleted is within the user's designated folder.
   const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
   const resolvedFullPath = path.resolve(fullServerPath);
 
@@ -282,7 +269,6 @@ export async function deleteImage(
   }
 }
 
-
 /**
  * Note on Security (Local File System):
  * - User IDs in paths: Ensure User IDs are sanitized or are non-malleable (e.g., UUIDs) to prevent path traversal.
@@ -295,4 +281,3 @@ export async function deleteImage(
  *   - Set `X-Content-Type-Options: nosniff`.
  * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure.
  */
-
