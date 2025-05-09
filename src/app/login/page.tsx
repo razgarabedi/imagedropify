@@ -1,7 +1,7 @@
 // src/app/login/page.tsx
 "use client";
 
-import React, { useState, type FormEvent, useEffect, useActionState } from 'react';
+import React, { useState, type FormEvent, useEffect, useActionState, startTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,15 +63,15 @@ export default function LoginPage() {
     e.preventDefault();
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
+    // loginFormAction is used in form's action prop, so it's automatically wrapped in a transition
     loginFormAction(formData);
   };
 
-  const handleSignupSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault(); // Should not be needed if button type is not submit for signup
-    // For signup, we'll create a separate form submit or just call the action directly
-    // For simplicity, let's assume the button click directly triggers the action with current email/password
-    // This part needs to be refactored if signup is a separate form
-  };
+  // handleSignupSubmit is not used directly by a form element's action prop for the signup button.
+  // Instead, handleSignupClick calls signupFormAction.
+  // const handleSignupSubmit = (e: FormEvent<HTMLFormElement>) => {
+  //   e.preventDefault(); 
+  // };
 
   const handleSignupClick = () => {
     if (!email || !password) {
@@ -82,7 +82,9 @@ export default function LoginPage() {
     const formData = new FormData();
     formData.append('email', email);
     formData.append('password', password);
-    signupFormAction(formData);
+    startTransition(() => {
+      signupFormAction(formData);
+    });
   };
 
 
@@ -144,3 +146,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
