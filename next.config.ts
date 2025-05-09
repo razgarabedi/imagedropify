@@ -1,3 +1,4 @@
+
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
@@ -18,15 +19,15 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // Configure the body parser to accept larger request bodies for API routes.
+  // Configure the body parser to accept larger request bodies for API routes (less relevant with App Router).
   api: {
     bodyParser: {
-      sizeLimit: '6mb', // Set the desired limit, e.g., 6MB
+      sizeLimit: '10mb', 
     },
   },
   // Configure body size limit for Server Actions
   serverActions: {
-    bodySizeLimit: '6mb', // Set the desired limit, e.g., 6MB
+    bodySizeLimit: '10mb', 
   },
 };
 
