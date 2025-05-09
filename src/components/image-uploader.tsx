@@ -3,13 +3,14 @@
 
 import React, { useState, useCallback, useRef, useEffect, useActionState, startTransition } from 'react';
 import Image from 'next/image';
-import { UploadCloud, Loader2 } from 'lucide-react';
+import { UploadCloud, Loader2, UserX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { uploadImage, type UploadedImageServerData } from '@/app/actions/imageActions';
+import { useAuth } from '@/hooks/use-auth';
 
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -19,6 +20,7 @@ export interface UploadedImageFile {
   name: string; // original file name
   previewSrc: string; // data URI for local preview
   url: string; // server URL for the image
+  userId: string;
 }
 
 interface ImageUploaderProps {
@@ -33,6 +35,7 @@ const initialState: {
 
 
 export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
+  const { user, loading: authLoading } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [localPreviewSrc, setLocalPreviewSrc] = useState<string | null>(null);
@@ -42,9 +45,12 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
 
   const [actionState, formAction, isPending] = useActionState(
     async (currentState: typeof initialState, formData: FormData) => {
-      setUploadProgress(30); // Initial progress
-      const result = await uploadImage(formData);
-      setUploadProgress(100); // Completion progress
+      if (!user) {
+        return { success: false, error: "User not authenticated. Please login to upload." };
+      }
+      setUploadProgress(30); 
+      const result = await uploadImage(formData, user.uid);
+      setUploadProgress(100); 
       return result;
     },
     initialState
@@ -61,7 +67,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
 
   useEffect(() => {
     if (isPending) {
-      // Optionally, set some intermediate progress if desired
+      // Pending state is active
     } else if (actionState.success && actionState.data) {
       toast({
         title: 'Image Uploaded!',
@@ -69,8 +75,9 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
       });
       onImageUpload({
         name: actionState.data.originalName,
-        previewSrc: localPreviewSrc || actionState.data.url, // Prefer local preview if available for smoothness
+        previewSrc: localPreviewSrc || actionState.data.url, 
         url: actionState.data.url,
+        userId: actionState.data.userId,
       });
       resetUploaderVisualState();
     } else if (actionState.error) {
@@ -79,14 +86,20 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
         title: 'Upload Failed',
         description: actionState.error,
       });
-      setUploadProgress(0); // Reset progress on failure, but keep preview
+      setUploadProgress(0); 
     }
   }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState, localPreviewSrc]);
 
 
   const handleFileSelected = useCallback((file: File | null) => {
     if (!file) return;
-    if (isPending) return; // Prevent new uploads while one is in progress
+    if (isPending) return; 
+
+    if (!user) {
+      toast({ variant: 'destructive', title: 'Authentication Required', description: 'Please login to upload images.' });
+      resetUploaderVisualState();
+      return;
+    }
 
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
       toast({ variant: 'destructive', title: 'Invalid File Type', description: `Please upload a JPG, PNG, GIF, or WebP image. You tried: ${file.type}` });
@@ -101,12 +114,11 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     }
 
     setLocalFileName(file.name);
-    setUploadProgress(0); // Reset progress for the new file selection phase
+    setUploadProgress(0); 
 
     const reader = new FileReader();
     reader.onloadend = () => {
       setLocalPreviewSrc(reader.result as string);
-      // Prepare FormData and trigger the server action
       const formData = new FormData();
       formData.append('image', file);
       startTransition(() => {
@@ -118,13 +130,13 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
       resetUploaderVisualState();
     };
     reader.readAsDataURL(file);
-  }, [isPending, formAction, resetUploaderVisualState, toast]);
+  }, [isPending, formAction, resetUploaderVisualState, toast, user]);
 
 
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isPending) return;
+    if (isPending || !user || authLoading) return;
     setIsDragging(true);
   };
 
@@ -137,7 +149,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isPending) return;
+    if (isPending || !user || authLoading) return;
     if (!isDragging) setIsDragging(true);
   };
 
@@ -145,7 +157,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (isPending) return;
+    if (isPending || !user || authLoading) return;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFileSelected(e.dataTransfer.files[0]);
       e.dataTransfer.clearData();
@@ -159,19 +171,48 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
   };
 
   const triggerFileInput = () => {
-    if (isPending) return;
+    if (isPending || !user || authLoading) return;
     fileInputRef.current?.click();
   };
   
   useEffect(() => {
     const currentPreview = localPreviewSrc;
-    // Clean up object URLs to prevent memory leaks
     return () => {
       if (currentPreview && currentPreview.startsWith('blob:')) {
         URL.revokeObjectURL(currentPreview);
       }
     };
   }, [localPreviewSrc]);
+
+  if (authLoading) {
+    return (
+      <Card className="shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-center text-xl">Upload Your Image</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center justify-center p-8">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+          <p>Loading authentication...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  
+  if (!user) {
+    return (
+      <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
+        <CardHeader>
+          <CardTitle className="text-center text-xl">Login to Upload</CardTitle>
+          <CardDescription className="text-center">Please login to upload and manage your images.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg">
+            <UserX className="h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-lg font-semibold text-foreground">Authentication Required</p>
+            <p className="text-sm text-muted-foreground">You need to be logged in to upload images.</p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
@@ -203,7 +244,7 @@ export function ImageUploader({ onImageUpload }: ImageUploaderProps) {
             accept={ACCEPTED_IMAGE_TYPES.join(',')}
             className="hidden"
             disabled={isPending}
-            name="image" // Name attribute is used by FormData
+            name="image" 
           />
           {isPending ? (
             <div className="flex flex-col items-center text-center w-full">
