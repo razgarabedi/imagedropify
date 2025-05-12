@@ -179,10 +179,15 @@ Paste the following configuration. Replace `your_domain.com` and `/var/www/image
 ```nginx
 server {
     listen 80;
-    server_name your_domain.com www.your_domain.com;
+    server_name your_domain.com www.your_domain.com; # Replace with your domain or server IP
+
+    # Path to project root, e.g., /var/www/imagedrop
+    # This variable is not standard Nginx but can be used for clarity if you adapt the config.
+    # For this example, we'll hardcode the path in `alias` and `root` directives.
+    # set $project_root /var/www/imagedrop; 
 
     access_log /var/log/nginx/imagedrop.access.log;
-    error_log /var/log/nginx/imagedrop.error.log;
+    error_log /var/log/nginx/imagedrop.error.log; # Check this file for errors!
 
     # Max body size for uploads (e.g., 10MB). Must be >= Next.js app bodySizeLimit.
     client_max_body_size 10M;
@@ -201,29 +206,46 @@ server {
         proxy_send_timeout 600s; 
     }
 
+    # Serve uploaded images directly from the filesystem
+    # This location block is crucial for serving static images.
     location /uploads/ {
-        alias /var/www/imagedrop/public/uploads/; 
-        autoindex off; 
-        expires 1M;    
-        access_log off; 
+        # The `alias` path MUST point to the directory on your server where
+        # the `users` subfolder (containing user-specific uploads) is located.
+        # In this app, images are saved to `public/uploads/users/...`
+        # So the alias should point to the `public/uploads` part of your project.
+        alias /var/www/imagedrop/public/uploads/; # IMPORTANT: Ensure this path is correct for your server setup.
+                                                  # And ensure it ends with a slash if the location block does.
+        
+        autoindex off; # Disable directory listing for security.
+        expires 1M;    # Cache images for 1 month in browser.
+        access_log off; # Optional: reduce logging for static assets.
         add_header Cache-Control "public";
 
+        # Security: Prevent execution of any scripts in the uploads folder.
         location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
             deny all;
             return 403;
         }
+        # Security: Prevent browsers from MIME-sniffing the content-type.
         add_header X-Content-Type-Options "nosniff";
     }
 
+    # Serve Next.js static assets (CSS, JS chunks, etc.)
+    # This allows Nginx to cache them effectively.
     location /_next/static/ {
         proxy_cache_bypass $http_upgrade; 
         proxy_pass http://localhost:3000/_next/static/;
-        expires max; 
+        expires max; # Cache these indefinitely as they are typically versioned.
         add_header Cache-Control "public";
     }
     
     # Optional: SSL Configuration (Certbot example commented out)
     # listen 443 ssl http2;
+    # server_name your_domain.com www.your_domain.com;
+    # ssl_certificate /etc/letsencrypt/live/your_domain.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/your_domain.com/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf;
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
     # ... (rest of SSL config) ...
 }
 ```
@@ -231,27 +253,45 @@ server {
 Enable the Nginx site:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/
+# Create a symbolic link from sites-available to sites-enabled
+sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/imagedrop
+
+# Test Nginx configuration for syntax errors
 sudo nginx -t
+
+# If the test is successful, restart Nginx to apply changes
 sudo systemctl restart nginx
 ```
 
 ### Step 9: Configure Firewall (UFW)
 
+If you have `ufw` (Uncomplicated Firewall) enabled:
+
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full' # Or 'Nginx HTTP' if not using HTTPS
+sudo ufw allow 'Nginx HTTP'  # Allows traffic on port 80
+# If you configured SSL (HTTPS):
+# sudo ufw allow 'Nginx HTTPS' # Allows traffic on port 443
 sudo ufw enable
 sudo ufw status
 ```
 
 ### Step 10: (Optional) Secure Nginx with Certbot (Let's Encrypt SSL)
 
+If you have a domain name, it's highly recommended to use HTTPS.
+
 ```bash
+# Install Certbot and the Nginx plugin
 sudo apt install certbot python3-certbot-nginx
+
+# Obtain and install SSL certificate (follow prompts)
+# This will also attempt to modify your Nginx config for SSL.
 sudo certbot --nginx -d your_domain.com -d www.your_domain.com
+
+# Test automatic renewal
 sudo certbot renew --dry-run
 ```
+If Certbot modifies your Nginx config, ensure the `location /uploads/` and `location /_next/static/` blocks are still present and correct within the `server` block that handles port 443.
 
 ### Security Considerations for Local Setup
 
@@ -270,25 +310,54 @@ sudo certbot renew --dry-run
 
 ### Troubleshooting
 
-*   **502 Bad Gateway:** Check PM2 status/logs (`pm2 list`, `pm2 logs imagedrop`). Ensure Nginx `proxy_pass` is correct.
-*   **Permission Denied:** Check Nginx logs. PM2 user needs read access to project, write to `public/uploads`, `users.json`, `server-settings.json`. Nginx user (`www-data`) needs read for image paths.
-*   **Nginx Config Test Fails (`sudo nginx -t`):** Review output.
+*   **502 Bad Gateway:** Your Next.js app (managed by PM2) might be down or not responding.
+    *   Check PM2 status: `pm2 list`
+    *   Check PM2 logs: `pm2 logs imagedrop`
+    *   Ensure Nginx `proxy_pass http://localhost:3000;` points to the correct port Next.js is running on.
+*   **Permission Denied (General):**
+    *   For file system operations by the app (uploads, writing `users.json`): The user running the PM2 process needs write permissions.
+    *   For Nginx serving files: The Nginx worker user (often `www-data`) needs read permissions. See "Uploaded Images Show 'isn't a valid image'" below.
+    *   Check Nginx error logs: `sudo cat /var/log/nginx/imagedrop.error.log` or `sudo cat /var/log/nginx/error.log`.
+*   **Nginx Config Test Fails (`sudo nginx -t`):** Review the output carefully. It usually indicates the line number and type of error.
 *   **Login/Signup/Admin Issues:** Check PM2 logs, browser console. Ensure `JWT_SECRET_KEY` is set. Ensure admin role is correctly set in `users.json`.
-*   **Uploaded Images Show "isn't a valid image" / HTML response:**
-    *   Verify Nginx `alias` path in `location /uploads/`.
-    *   Check file system permissions for Nginx user (`www-data`) to read images and traverse directories.
-    *   Check Nginx error logs (`/var/log/nginx/imagedrop.error.log`).
-    *   Ensure image file exists at the expected path.
+*   **Uploaded Images Show "isn't a valid image" / HTML response (e.g., 404 page from Next.js):**
+    This typically means Nginx is not serving the image file directly via the `location /uploads/` block, and the request is instead being proxied to your Next.js application, which doesn't have a route for that image path.
+    1.  **Verify Nginx Configuration is Loaded:**
+        *   Ensure you edited the correct file (e.g., `/etc/nginx/sites-available/imagedrop`).
+        *   Ensure the symlink is correct: `ls -l /etc/nginx/sites-enabled/` (should show `imagedrop -> ../sites-available/imagedrop`).
+        *   Test Nginx config: `sudo nginx -t`.
+        *   **Reload Nginx**: `sudo systemctl reload nginx` (or `restart` if reload doesn't work).
+    2.  **Verify `alias` Path in Nginx Config:** The `alias` in `location /uploads/` must be the **absolute path** to your project's `public/uploads` directory on the server.
+        *   Navigate to your project root: `cd /var/www/imagedrop`
+        *   Get the full path to `public/uploads`: `pwd`/public/uploads (e.g., `/var/www/imagedrop/public/uploads`).
+        *   Ensure this matches the `alias` directive in `/etc/nginx/sites-available/imagedrop`. It should be `alias /var/www/imagedrop/public/uploads/;`.
+    3.  **Check File System Permissions for Nginx User:** The Nginx worker process user (commonly `www-data` on Ubuntu) needs:
+        *   Read (`r`) permission on the image files themselves.
+        *   Read (`r`) and execute (`x`) permissions on ALL directories in the path leading to the images (e.g., `/var/www/`, `/var/www/imagedrop/`, `/var/www/imagedrop/public/`, `/var/www/imagedrop/public/uploads/`, and subsequent user/date folders).
+        *   To check the Nginx user: `ps aux | grep "nginx: worker process" | awk '{print $1}' | head -n1` (usually `www-data`).
+        *   Test permissions for a specific image file (replace placeholders):
+            ```bash
+            # Example:
+            # sudo -u www-data ls -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png
+            # namei -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png
+            ```
+            The `namei` command is very useful for seeing permissions along the entire path.
+    4.  **Check Nginx Error Logs (Critically Important!):**
+        *   `sudo tail -f /var/log/nginx/imagedrop.error.log`
+        *   Also check the main Nginx error log: `sudo tail -f /var/log/nginx/error.log`
+        *   Look for "Permission denied", "No such file or directory", or other errors related to the image path when you try to access an image.
+    5.  **Ensure Image File Exists:** Double-check that the image file actually exists at the expected path on the server.
+        *   `ls -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png`
 *   **Body Exceeded Limit Errors:**
     *   Next.js: `experimental.serverActions.bodySizeLimit` in `next.config.ts` (e.g., '10mb').
-    *   Nginx: `client_max_body_size` in Nginx config (e.g., `10M`).
+    *   Nginx: `client_max_body_size` in Nginx config (e.g., `10M` in the `server` block or relevant `location` block).
     *   Admin-configurable limit (in `server-settings.json`) is an application-level check within these harder limits. Restart Nginx and PM2 app after changes.
 
 ### Updating the Application
 
 1.  `cd /var/www/imagedrop`
 2.  `git pull origin main` (or your branch)
-3.  `npm install`
+3.  `npm install` (if dependencies changed)
 4.  `npm run build`
 5.  `pm2 restart imagedrop`
 
@@ -303,3 +372,4 @@ sudo certbot renew --dry-run
 5.  **Restart Application:** `pm2 restart imagedrop` (This will recreate `server-settings.json` with defaults if `settingsService.ts` handles it, or you might need to add a default one back).
 
 Your application should now be accessible.
+```
