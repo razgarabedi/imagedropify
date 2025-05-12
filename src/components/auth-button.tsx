@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogIn, LogOut, UserCircle, Loader2, Images } from 'lucide-react';
+import { LogIn, LogOut, UserCircle, Loader2, Images, ShieldCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu,
@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { logoutUserAction } from '@/app/actions/authActions'; // Updated import path
+import { logoutUserAction } from '@/app/actions/authActions'; 
 import React from 'react';
 
 
@@ -29,8 +29,6 @@ export function AuthButton() {
       const result = await logoutUserAction();
       if (result.success) {
         setUser(null); 
-        // Redirect is handled by AuthContext or page navigations typically
-        // toast({ title: 'Logged Out', description: "You have been successfully logged out." });
       } else {
         toast({ variant: 'destructive', title: 'Logout Failed', description: result.error || 'Could not log out. Please try again.' });
       }
@@ -56,7 +54,7 @@ export function AuthButton() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuLabel>{user.email}</DropdownMenuLabel>
+          <DropdownMenuLabel>{user.email} ({user.role})</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem asChild className="cursor-pointer">
             <Link href="/my-images">
@@ -64,6 +62,14 @@ export function AuthButton() {
               My Images
             </Link>
           </DropdownMenuItem>
+          {user.role === 'admin' && (
+            <DropdownMenuItem asChild className="cursor-pointer">
+              <Link href="/admin/dashboard">
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                Admin Dashboard
+              </Link>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout} className="text-destructive hover:!bg-destructive hover:!text-destructive-foreground cursor-pointer" disabled={isLoggingOut}>
             {isLoggingOut ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2 h-4 w-4" />}
@@ -83,4 +89,3 @@ export function AuthButton() {
     </Button>
   );
 }
-

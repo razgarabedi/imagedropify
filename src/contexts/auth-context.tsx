@@ -4,8 +4,8 @@
 import type { ReactNode } from 'react';
 import { createContext, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { User } from '@/lib/auth/types';
-import { getCurrentUserAction } from '@/app/actions/authActions'; // Updated import path
+import type { User } from '@/lib/auth/types'; // User type now includes 'role'
+import { getCurrentUserAction } from '@/app/actions/authActions';
 
 interface AuthContextType {
   user: User | null;
@@ -29,7 +29,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     async function fetchCurrentUser() {
-      setLoading(true); // Ensure loading is true at the start of fetch
+      setLoading(true); 
       try {
         const currentUser = await getCurrentUserAction();
         setUser(currentUser);
@@ -41,7 +41,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     }
     fetchCurrentUser();
-  }, []); // Removed setUser from dependencies as it can cause loops if not memoized by caller
+  }, []); 
 
   if (loading) {
     return (

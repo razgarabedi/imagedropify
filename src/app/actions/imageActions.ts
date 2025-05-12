@@ -5,10 +5,11 @@ import fs from 'fs/promises';
 import path from 'path';
 import { stat } from 'fs/promises';
 import { revalidatePath } from 'next/cache';
-import { getCurrentUserIdFromSession } from '@/lib/auth/service'; // Import session utility
+import { getCurrentUserIdFromSession } from '@/lib/auth/service'; 
+import { getMaxUploadSizeMB } from '@/lib/settingsService'; // Import settings service
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
-const MAX_FILE_SIZE = 6 * 1024 * 1024; // 6MB
+// const MAX_FILE_SIZE = 6 * 1024 * 1024; // 6MB - This will be replaced by dynamic value
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MIME_TO_EXTENSION: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -16,7 +17,7 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
-const MAX_FILENAME_LENGTH = 200; // Max length for new filename (excluding extension)
+const MAX_FILENAME_LENGTH = 200; 
 
 
 function getFormattedDateFolder(): string {
@@ -26,7 +27,6 @@ function getFormattedDateFolder(): string {
   return `${month}.${year}`;
 }
 
-// Ensure upload directory (user-specific and dated subfolder) exists
 async function ensureUploadDirsExist(userId: string): Promise<string> {
   if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
     console.error('Invalid User ID for directory creation:', userId);
@@ -38,8 +38,6 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
   const resolvedUserSpecificPath = path.resolve(userSpecificPath);
   const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-  // Check if the resolved path is outside the base public upload directory for users
-  // Allows path to be exactly resolvedUploadDirBase or start with resolvedUploadDirBase + (OS specific separator)
   if (!(resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep) || 
         resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.win32.sep) ||
         resolvedUserSpecificPath === resolvedUploadDirBase)
@@ -47,7 +45,6 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
       console.error(`Security alert: Attempt to create directory outside designated uploads area. Path: ${userSpecificPath}, UserID: ${userId}`);
       throw new Error('Path is outside allowed directory for user uploads.');
   }
-
 
   try {
     await fs.mkdir(userSpecificPath, { recursive: true });
@@ -60,10 +57,10 @@ async function ensureUploadDirsExist(userId: string): Promise<string> {
 
 
 export interface UploadedImageServerData {
-  name: string; // The generated unique filename on the server (includes extension)
-  url: string; // The public URL to access the image
-  originalName: string; // The original name of the uploaded file (includes extension)
-  userId: string; // ID of the user who uploaded the image
+  name: string; 
+  url: string; 
+  originalName: string; 
+  userId: string; 
 }
 
 export interface UploadImageActionState {
@@ -82,6 +79,9 @@ export async function uploadImage(
       return { success: false, error: 'User authentication required for upload.' };
     }
     
+    const maxUploadSizeMB = await getMaxUploadSizeMB();
+    const currentMaxFileSize = maxUploadSizeMB * 1024 * 1024;
+
     let currentActualUploadPath: string;
     try {
       currentActualUploadPath = await ensureUploadDirsExist(userId);
@@ -105,14 +105,13 @@ export async function uploadImage(
       return { success: false, error: `File type (${file.type}) is not supported or cannot be mapped to an extension.` };
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      return { success: false, error: `File too large. Maximum allowed size is 6MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
+    if (file.size > currentMaxFileSize) {
+      return { success: false, error: `File too large. Maximum allowed size is ${maxUploadSizeMB}MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` };
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Sanitize original file name for suffix, but primary name is unique
     const safeOriginalNamePart = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
     const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0,255); 
@@ -126,6 +125,7 @@ export async function uploadImage(
       
       revalidatePath('/'); 
       revalidatePath('/my-images');
+      revalidatePath(`/admin/dashboard`); // Revalidate admin dashboard for user activity updates
       
       return {
         success: true,
@@ -137,22 +137,21 @@ export async function uploadImage(
     }
   } catch (e: any) {
     console.error("Unexpected error in uploadImage action:", e);
-    // This ensures that even if an unexpected error occurs, a structured response is sent.
     return { success: false, error: "An unexpected server error occurred during upload. Please check server logs." };
   }
 }
 
 
 export interface UserImage {
-  id: string; // Composite ID: `userId/MM.YYYY/filename.ext`
-  name: string; // filename.ext
-  url: string; // Public URL: `/uploads/users/userId/MM.YYYY/filename.ext`
+  id: string; 
+  name: string; 
+  url: string; 
   ctime: number; 
   userId: string;
 }
 
-export async function getUserImages(limit?: number): Promise<UserImage[]> {
-  const userId = await getCurrentUserIdFromSession();
+export async function getUserImages(userIdFromSession?: string, limit?: number): Promise<UserImage[]> {
+  const userId = userIdFromSession || await getCurrentUserIdFromSession();
   if (!userId) {
     return [];
   }
@@ -163,7 +162,6 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
     const resolvedUserUploadDir = path.resolve(userUploadDir);
     const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
 
-    // Check if the resolved user upload directory is safely within the base public upload directory.
     if (!(resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) ||
           resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
           resolvedUserUploadDir === resolvedUploadDirBase)
@@ -186,9 +184,8 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
       if (dirent.isDirectory() && dateFolderRegex.test(dirent.name)) {
         const dateFolderPath = path.join(userUploadDir, dirent.name);
         const resolvedDateFolderPath = path.resolve(dateFolderPath);
-        const resolvedUserUploadDirCheck = path.resolve(userUploadDir); // For comparison
+        const resolvedUserUploadDirCheck = path.resolve(userUploadDir); 
         
-        // Ensure dateFolderPath is a direct subdirectory of userUploadDir
         if (!(resolvedDateFolderPath.startsWith(resolvedUserUploadDirCheck + path.sep) ||
               resolvedDateFolderPath.startsWith(resolvedUserUploadDirCheck + path.win32.sep))
            ) {
@@ -205,7 +202,6 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
               }
               const filePath = path.join(dateFolderPath, file);
               const resolvedFilePath = path.resolve(filePath);
-              // Ensure filePath is a direct child of dateFolderPath
               if (!(resolvedFilePath.startsWith(resolvedDateFolderPath + path.sep) ||
                     resolvedFilePath.startsWith(resolvedDateFolderPath + path.win32.sep))
                  ) {
@@ -218,7 +214,7 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
                 if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
                   return {
                     id: `${userId}/${dirent.name}/${file}`, 
-                    name: file, // filename.ext
+                    name: file, 
                     url: `/uploads/users/${userId}/${dirent.name}/${file}`,
                     ctime: statsResult.ctimeMs,
                     userId: userId,
@@ -232,7 +228,6 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
           );
           allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
         } catch (readDirError) {
-           // Ignore if a single date folder is unreadable, continue with others.
         }
       }
     }
@@ -247,12 +242,23 @@ export async function getUserImages(limit?: number): Promise<UserImage[]> {
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === 'ENOENT' && nodeError.path === userUploadDir) {
-      return []; // User directory doesn't exist yet, no images.
+      return []; 
     }
     console.error('Failed to read or process user image directories:', error);
     return []; 
   }
 }
+
+export async function countUserImages(userId: string): Promise<number> {
+  // Basic validation for userId, though more robust validation might be needed
+  if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
+    console.error('Invalid User ID for counting images:', userId);
+    return 0;
+  }
+  const userImages = await getUserImages(userId); // Pass userId directly
+  return userImages.length;
+}
+
 
 export interface DeleteImageActionState {
     success: boolean;
@@ -261,15 +267,13 @@ export interface DeleteImageActionState {
 
 export async function deleteImage(
   prevState: DeleteImageActionState, 
-  imagePathFragment: string // Expects 'MM.YYYY/filename.ext'
+  imagePathFragment: string 
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
     return { success: false, error: 'User authentication required for deletion.' };
   }
 
-  // Validate imagePathFragment structure: 'MM.YYYY/filename.ext'
-  // The fragment is constructed on client using '/' as separator.
   if (typeof imagePathFragment !== 'string' || imagePathFragment.includes('..')) {
     console.error(`Security alert: Invalid imagePathFragment (contains '..' or not a string). User: ${requestingUserId}, Fragment: ${imagePathFragment}`);
     return { success: false, error: 'Invalid image path format for deletion.' };
@@ -294,13 +298,11 @@ export async function deleteImage(
     return { success: false, error: 'Invalid image path format for deletion.' };
   }
   
-  // Construct the full path using validated components and platform-specific separator
   const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateFolder, filename);
   
   const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
   const resolvedFullPath = path.resolve(fullServerPath);
 
-  // Ensure the resolved path is within the user's specific base directory
   if (!(resolvedFullPath.startsWith(userBaseDir + path.sep) || 
         resolvedFullPath.startsWith(userBaseDir + path.win32.sep))
      ) {
@@ -314,6 +316,7 @@ export async function deleteImage(
     
     revalidatePath('/'); 
     revalidatePath('/my-images');
+    revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (error: any) {
     if (error.code === 'ENOENT') {
@@ -329,9 +332,9 @@ export interface RenameImageActionState {
   success: boolean;
   error?: string;
   data?: {
-    newId: string; // new composite ID
-    newName: string; // new filename.ext
-    newUrl: string; // new public URL
+    newId: string; 
+    newName: string; 
+    newUrl: string; 
   };
 }
 
@@ -356,7 +359,6 @@ export async function renameImage(
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
 
-  // Validate currentImagePathFragment structure: 'MM.YYYY/filename.ext'
   if (typeof currentImagePathFragment !== 'string' || currentImagePathFragment.includes('..')) {
     console.error(`Security alert: Invalid currentImagePathFragment (contains '..' or not a string) for rename. User: ${requestingUserId}, Fragment: ${currentImagePathFragment}`);
     return { success: false, error: 'Invalid current image path format for renaming.' };
@@ -414,7 +416,7 @@ export async function renameImage(
       await fs.access(newFullPath);
       return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this folder.` };
     } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e; // Re-throw if it's not a "file not found" error
+      if (e.code !== 'ENOENT') throw e; 
     }
 
     await fs.rename(oldFullPath, newFullPath);
@@ -424,6 +426,8 @@ export async function renameImage(
 
     revalidatePath('/');
     revalidatePath('/my-images');
+    revalidatePath('/admin/dashboard');
+
 
     return {
       success: true,
@@ -441,7 +445,6 @@ export async function renameImage(
     return { success: false, error: 'Failed to rename file on server. Please try again.' };
   }
 }
-
 
 /**
  * Note on Security (Local File System):
@@ -463,4 +466,3 @@ export async function renameImage(
  *   - Set `X-Content-Type-Options: nosniff`.
  * - This implementation relies on the session mechanism (`getCurrentUserIdFromSession`) being secure for identifying the user.
  */
-

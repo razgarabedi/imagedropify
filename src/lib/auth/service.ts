@@ -24,19 +24,29 @@ if (JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me' && process.env.NODE
 }
 const secret = new TextEncoder().encode(JWT_SECRET_KEY);
 
-async function readUsers(): Promise<User[]> {
+export async function readUsers(): Promise<User[]> {
   try {
     await fs.access(USERS_FILE_PATH);
     const data = await fs.readFile(USERS_FILE_PATH, 'utf-8');
-    return JSON.parse(data) as User[];
+    // Ensure roles are present, default to 'user' if missing for backward compatibility
+    const usersFromFile = JSON.parse(data) as Array<Partial<User> & { password?: string }>;
+    return usersFromFile.map(u => ({
+      id: u.id!,
+      email: u.email!,
+      role: u.role || 'user',
+      // Include password if present, for verifyPassword to use
+      ...(u.password && { password: u.password }),
+    })) as User[];
   } catch (error) {
     // If file doesn't exist or is invalid, return empty array
     return [];
   }
 }
 
-async function writeUsers(users: User[]): Promise<void> {
+async function writeUsers(users: Array<User & { password?: string }>): Promise<void> {
   try {
+    // When writing, we can choose to strip the password or keep it based on the demo's insecurity
+    // For this demo, we keep the plain text password
     await fs.writeFile(USERS_FILE_PATH, JSON.stringify(users, null, 2), 'utf-8');
   } catch (error) {
     console.error("Failed to write users file:", error);
@@ -46,46 +56,55 @@ async function writeUsers(users: User[]): Promise<void> {
 
 export async function findUserByEmail(email: string): Promise<User | undefined> {
   const users = await readUsers();
-  return users.find(user => user.email === email);
+  const user = users.find(user => user.email === email);
+  if (user) {
+    // Ensure the returned user object doesn't include the password directly
+    const { password: _p, ...userWithoutPassword } = user as any;
+    return userWithoutPassword as User;
+  }
+  return undefined;
 }
+
+
+export async function findUserById(id: string): Promise<User | undefined> {
+  const users = await readUsers();
+  const user = users.find(user => user.id === id);
+   if (user) {
+    // Ensure the returned user object doesn't include the password directly
+    const { password: _p, ...userWithoutPassword } = user as any;
+    return userWithoutPassword as User;
+  }
+  return undefined;
+}
+
 
 // WARNING: Plain text password storage. Insecure.
 export async function createUser(email: string, password: string): Promise<User> {
-  const existingUser = await findUserByEmail(email);
+  const users = await readUsers(); // Read users, potentially with passwords
+  const existingUser = users.find(u => u.email === email);
   if (existingUser) {
     throw new Error('User with this email already exists.');
   }
 
-  const users = await readUsers();
-  const newUser: User & { passwordHash?: string } = { // Temporarily include password for storage
+  const newUser: User & { password?: string } = { 
     id: uuidv4(),
     email,
+    role: 'user', // Default role for new users
+    password: password, // Storing plain text password
   };
 
-  // Storing password directly - INSECURE for demo.
-  // In a real app, hash the password here:
-  // newUser.passwordHash = await bcrypt.hash(password, 10);
-  (newUser as any).password = password; // Storing plain text password
-
-  users.push(newUser as User); // Cast back to User for type safety after adding password
+  users.push(newUser);
   
-  // Remove the temporary password field before saving to users.json if you were hashing
-  // For this plain text demo, we'll store it.
-  const usersToSave = users.map(u => {
-    const { ...userWithoutPasswordHash } = u as any; // Or remove password if it was temporary
-    return userWithoutPasswordHash;
-  });
-
-  await writeUsers(usersToSave);
+  await writeUsers(users);
   
-  // Return user without password
-  const { password: _p, ...userWithoutPassword } = newUser as any;
-  return userWithoutPassword as User;
+  // Return user without password field for external use
+  const { password: _p, ...userToReturn } = newUser;
+  return userToReturn;
 }
 
 // WARNING: Plain text password check. Insecure.
 export async function verifyPassword(email: string, passwordAttempt: string): Promise<User | null> {
-  const users = await readUsers(); // Read all users with their stored passwords
+  const users = await readUsers(); // Reads users with their stored passwords
   const userWithPassword = users.find(user => user.email === email) as (User & { password?: string }) | undefined;
 
   if (!userWithPassword || !userWithPassword.password) {
@@ -95,18 +114,13 @@ export async function verifyPassword(email: string, passwordAttempt: string): Pr
   // Plain text comparison - INSECURE
   if (userWithPassword.password === passwordAttempt) {
     const { password: _p, ...userWithoutStoredPassword } = userWithPassword;
-    return userWithoutStoredPassword;
+    return userWithoutStoredPassword as User; // Ensure correct User type is returned
   }
   
-  // In a real app, compare hashed passwords:
-  // if (user.passwordHash && await bcrypt.compare(passwordAttempt, user.passwordHash)) {
-  //   const { passwordHash, ...userToReturn } = user;
-  //   return userToReturn;
-  // }
   return null;
 }
 
-export async function createSessionToken(payload: SessionPayload): Promise<string> {
+export async function createSessionToken(payload: Omit<SessionPayload, 'exp' | 'iat'>): Promise<string> {
   return new jose.SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -119,9 +133,8 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
     const { payload } = await jose.jwtVerify(token, secret);
     return payload as SessionPayload;
   } catch (error: any) {
-    // Log the specific error for better debugging
     if (error instanceof jose.errors.JOSEError) {
-      console.error(`JOSE Error verifying token: ${error.code}`, error.message, error.stack);
+      console.error(`JOSE Error verifying token: ${error.code}`, error.message);
     } else {
       console.error('Unexpected error verifying token:', error);
     }
@@ -131,17 +144,23 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 
 export async function getCurrentUserIdFromSession(): Promise<string | null> {
   const cookieStore = await cookies();
-  // "Read" the cookie store by checking for the existence of the cookie first,
-  // as recommended for Server Actions before using .get().
-  // This check can be done after awaiting cookies()
   if (!cookieStore.has('session_token')) {
     return null;
   }
   const token = cookieStore.get('session_token')?.value;
   if (!token) {
-    return null; // Should be caught by .has() but good for safety
+    return null;
   }
   const payload = await verifySessionToken(token);
   return payload?.userId || null;
 }
 
+export async function getAllUsersForAdmin(): Promise<User[]> {
+  // This function assumes it's called by an admin-only action
+  const users = await readUsers();
+  // Return users without their passwords
+  return users.map(u => {
+    const { password: _p, ...userWithoutPassword } = u as any;
+    return userWithoutPassword as User;
+  });
+}
