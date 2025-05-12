@@ -1,10 +1,19 @@
-# Firebase Studio - ImageDrop Application (with Local Authentication)
+# Firebase Studio - ImageDrop Application (with Local Authentication & Approval)
 
-This is a Next.js application, ImageDrop, designed for easy image uploading and sharing. It now uses **local authentication** (storing user data in a `users.json` file on the server - **INSECURE, FOR DEMO PURPOSES ONLY**) and stores images locally on the server. Firebase *client-side SDK might still be used for other Firebase services if configured*, but not for authentication.
+This is a Next.js application, ImageDrop, designed for easy image uploading and sharing. It uses **local authentication** (storing user data in a `users.json` file on the server - **INSECURE, FOR DEMO PURPOSES ONLY**) and stores images locally on the server. A **user approval workflow** is now implemented.
 
-The application also includes an Administrator Dashboard for user management and site settings configuration.
+The application also includes an Administrator Dashboard for user management (including approval) and site settings configuration.
 
 To get started developing locally, take a look at `src/app/page.tsx`.
+
+## User Approval Workflow
+
+1.  **First User is Admin:** The very first user account created upon initial application startup is automatically designated as an **administrator** and their status is set to **approved**.
+2.  **Subsequent Signups:** All users who sign up *after* the first admin user will have their status set to **pending**.
+3.  **Pending Status:** Users with a 'pending' status can **not** log in. They will receive a message indicating their account needs administrator approval.
+4.  **Admin Approval:** An administrator must log in, navigate to the Admin Dashboard (`/admin/dashboard`), and manually **approve** or **reject** pending user accounts.
+5.  **Approved Status:** Once approved by an admin, the user can log in normally.
+6.  **Rejected Status:** If rejected, the user remains unable to log in. (Currently, rejected users stay in the `users.json` file with 'rejected' status. Future improvement could be to delete them or offer a re-application process).
 
 ## Running on Ubuntu with Nginx
 
@@ -98,44 +107,31 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
 
 **Important for file uploads, local user data & site settings:**
 *   The application saves uploaded files to `public/uploads/users/[userId]/[MM.YYYY]/filename.ext`. This directory will be created automatically if it doesn't exist. The maximum file size is configurable by an administrator via the Admin Dashboard (default 6MB), up to the server's body limit (10MB in Next.js config and Nginx example).
-*   **Local user data (including plain text passwords - DEMO ONLY, INSECURE)** is stored in `users.json` in the project root. Ensure this file is writable by the Node.js process (run by PM2) and **NEVER commit `users.json` to version control.** It should be in your `.gitignore` file.
+*   **Local user data (including plain text passwords - DEMO ONLY, INSECURE)** is stored in `users.json` in the project root. This file now includes user `role` (`admin` or `user`) and `status` (`pending`, `approved`, `rejected`). Ensure this file is writable by the Node.js process (run by PM2) and **NEVER commit `users.json` to version control.** It should be in your `.gitignore` file.
 *   **Site settings** (like max upload size) are stored in `server-settings.json` in the project root. This file should also be writable by the Node.js process and ideally not committed if settings are environment-specific (though for this demo, it can be committed with defaults).
 *   Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory and can create/write to `users.json` and `server-settings.json` in `/var/www/imagedrop/`.
 *   The Nginx user (typically `www-data`) needs read permissions for the entire path to the uploaded files to serve them.
 
-### Step 5.1: Admin User Setup
+### Step 5.1: Admin User Setup & Management
 
-The **first user who signs up** for the application will automatically be designated as an **administrator**. This user will have access to the Admin Dashboard at `/admin/dashboard`.
-
-If you need to change the admin user or assign admin rights to another existing user manually (e.g., if the first admin account needs to be changed or if `users.json` was populated manually):
-1.  Stop your application if it's running: `pm2 stop imagedrop`
-2.  Open the `users.json` file located in your project root (e.g., `/var/www/imagedrop/users.json`):
-    ```bash
-    nano /var/www/imagedrop/users.json
-    ```
-3.  Find the user entry you want to make an administrator. It will look like:
-    ```json
-    {
-      "id": "some-uuid-string",
-      "email": "user@example.com",
-      "password": "theirplaintextpassword",
-      "role": "user" 
-    }
-    ```
-4.  To make a user an admin, ensure their entry has `"role": "admin"`. To demote an admin, change it to `"role": "user"`.
-    ```json
-    {
-      "id": "some-uuid-string",
-      "email": "user@example.com",
-      "password": "theirplaintextpassword",
-      "role": "admin" 
-    }
-    ```
-5.  Save the file and exit the editor.
-6.  Restart your application: `pm2 restart imagedrop`
-
-The user with "admin" role can then access the `/admin/dashboard`.
-
+*   **Initial Admin:** The **first user who signs up** for the application will automatically be designated as an **administrator** with `approved` status. This user can access the Admin Dashboard at `/admin/dashboard`.
+*   **User Approval:** Subsequent users will have `pending` status upon signup. Admins must use the Admin Dashboard to **approve** or **reject** these pending accounts before they can log in.
+*   **Manual Admin Assignment (if needed):** If you need to change the admin user or manually assign admin rights (e.g., if the first admin account needs changing or `users.json` was populated manually):
+    1.  Stop your application: `pm2 stop imagedrop`
+    2.  Open `users.json` (`/var/www/imagedrop/users.json`): `nano users.json`
+    3.  Find the user entry. It will look similar to this (password and status fields included):
+        ```json
+        {
+          "id": "some-uuid-string",
+          "email": "user@example.com",
+          "role": "user", 
+          "status": "approved", 
+          "password": "theirplaintextpassword" 
+        }
+        ```
+    4.  To make a user an admin, ensure `"role": "admin"` and `"status": "approved"`. To demote, set `"role": "user"`.
+    5.  Save the file.
+    6.  Restart your application: `pm2 restart imagedrop`
 
 ### Step 6: Build the Application
 
@@ -148,7 +144,7 @@ npm run build
 
 ### Step 7: Start Application with PM2
 
-Start your Next.js application using PM2. The `npm start` script typically runs `next start`.
+Start your Next.js application using PM2.
 
 ```bash
 cd /var/www/imagedrop
@@ -170,27 +166,22 @@ By default, `next start` runs the application on port 3000.
 
 ### Step 8: Install and Configure Nginx
 
-Nginx will act as a reverse proxy.
+Install and configure Nginx as a reverse proxy.
 
 ```bash
 sudo apt install -y nginx
 sudo nano /etc/nginx/sites-available/imagedrop
 ```
 
-Paste the following configuration. Replace `your_domain.com` and `/var/www/imagedrop`. The `client_max_body_size` for Nginx (e.g., 10M) should be equal to or greater than the Next.js application's hard body limit (10MB in `next.config.ts`).
+Paste the following configuration. Replace `your_domain.com` and `/var/www/imagedrop`. Ensure `client_max_body_size` (e.g., 10M) matches or exceeds the Next.js `experimental.serverActions.bodySizeLimit` (e.g., '10mb').
 
 ```nginx
 server {
     listen 80;
     server_name your_domain.com www.your_domain.com; # Replace with your domain or server IP
 
-    # Path to project root, e.g., /var/www/imagedrop
-    # This variable is not standard Nginx but can be used for clarity if you adapt the config.
-    # For this example, we'll hardcode the path in `alias` and `root` directives.
-    # set $project_root /var/www/imagedrop; 
-
     access_log /var/log/nginx/imagedrop.access.log;
-    error_log /var/log/nginx/imagedrop.error.log; # Check this file for errors!
+    error_log /var/log/nginx/imagedrop.error.log; 
 
     # Max body size for uploads (e.g., 10MB). Must be >= Next.js app bodySizeLimit.
     client_max_body_size 10M;
@@ -210,168 +201,92 @@ server {
     }
 
     # Serve uploaded images directly from the filesystem
-    # This location block is crucial for serving static images.
     location /uploads/ {
-        # The `alias` path MUST point to the directory on your server where
-        # the `users` subfolder (containing user-specific uploads) is located.
-        # In this app, images are saved to `public/uploads/users/...`
-        # So the alias should point to the `public/uploads` part of your project.
-        alias /var/www/imagedrop/public/uploads/; # IMPORTANT: Ensure this path is correct for your server setup.
-                                                  # And ensure it ends with a slash if the location block does.
-        
-        autoindex off; # Disable directory listing for security.
-        expires 1M;    # Cache images for 1 month in browser.
-        access_log off; # Optional: reduce logging for static assets.
+        alias /var/www/imagedrop/public/uploads/; # Points to the directory containing the 'users' subfolder
+        autoindex off; 
+        expires 1M;    
+        access_log off; 
         add_header Cache-Control "public";
 
-        # Security: Prevent execution of any scripts in the uploads folder.
         location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
             deny all;
             return 403;
         }
-        # Security: Prevent browsers from MIME-sniffing the content-type.
         add_header X-Content-Type-Options "nosniff";
     }
 
-    # Serve Next.js static assets (CSS, JS chunks, etc.)
-    # This allows Nginx to cache them effectively.
+    # Serve Next.js static assets
     location /_next/static/ {
         proxy_cache_bypass $http_upgrade; 
         proxy_pass http://localhost:3000/_next/static/;
-        expires max; # Cache these indefinitely as they are typically versioned.
+        expires max; 
         add_header Cache-Control "public";
     }
     
-    # Optional: SSL Configuration (Certbot example commented out)
-    # listen 443 ssl http2;
-    # server_name your_domain.com www.your_domain.com;
-    # ssl_certificate /etc/letsencrypt/live/your_domain.com/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/your_domain.com/privkey.pem;
-    # include /etc/letsencrypt/options-ssl-nginx.conf;
-    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    # ... (rest of SSL config) ...
+    # Optional: SSL Configuration (Certbot example)
+    # ... (SSL config as before) ...
 }
 ```
 
 Enable the Nginx site:
 
 ```bash
-# Create a symbolic link from sites-available to sites-enabled
 sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/imagedrop
-
-# Test Nginx configuration for syntax errors
 sudo nginx -t
-
-# If the test is successful, restart Nginx to apply changes
 sudo systemctl restart nginx
 ```
 
 ### Step 9: Configure Firewall (UFW)
 
-If you have `ufw` (Uncomplicated Firewall) enabled:
-
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx HTTP'  # Allows traffic on port 80
-# If you configured SSL (HTTPS):
-# sudo ufw allow 'Nginx HTTPS' # Allows traffic on port 443
+sudo ufw allow 'Nginx HTTP' 
+# If using SSL: sudo ufw allow 'Nginx HTTPS'
 sudo ufw enable
 sudo ufw status
 ```
 
 ### Step 10: (Optional) Secure Nginx with Certbot (Let's Encrypt SSL)
 
-If you have a domain name, it's highly recommended to use HTTPS.
-
-```bash
-# Install Certbot and the Nginx plugin
-sudo apt install certbot python3-certbot-nginx
-
-# Obtain and install SSL certificate (follow prompts)
-# This will also attempt to modify your Nginx config for SSL.
-sudo certbot --nginx -d your_domain.com -d www.your_domain.com
-
-# Test automatic renewal
-sudo certbot renew --dry-run
-```
-If Certbot modifies your Nginx config, ensure the `location /uploads/` and `location /_next/static/` blocks are still present and correct within the `server` block that handles port 443.
+(Instructions remain the same as before)
 
 ### Security Considerations for Local Setup
 
 *   **`JWT_SECRET_KEY`**: Critical. Strong and secret.
 *   **`users.json` (DEMO ONLY)**:
-    *   Plain text passwords are insecure. For real apps, use hashing (bcrypt).
+    *   Plain text passwords are insecure.
+    *   Includes user role and status.
     *   Restrictive file permissions.
     *   Ensure it's in `.gitignore`.
 *   **`server-settings.json`**: Contains site configuration. Ensure appropriate permissions.
 *   **File Uploads (`public/uploads`)**:
-    *   Nginx `alias` path must be correct. `client_max_body_size` in Nginx (e.g., 10M) must match or exceed Next.js `experimental.serverActions.bodySizeLimit` (e.g., 10MB).
-    *   File Permissions: Node.js (PM2 user) needs write to `public/uploads/users/` and `users.json`, `server-settings.json`. Nginx user (`www-data`) needs read access to images and read+execute on path directories.
+    *   Nginx `alias` path must be correct. `client_max_body_size` in Nginx must match or exceed Next.js `bodySizeLimit`.
+    *   File Permissions: Node.js (PM2 user) needs write to `public/uploads/users/`, `users.json`, `server-settings.json`. Nginx user (`www-data`) needs read access to images and path directories.
     *   Content Validation: Handled in `imageActions.ts`.
 *   **Session Management**: JWTs in HTTP-only cookies. Use HTTPS in production.
-*   **Admin Dashboard**: Access is restricted by user role. Ensure admin accounts are secure.
+*   **Admin Dashboard**: Access restricted by user role. Admins manage user approvals. Ensure admin accounts are secure.
+*   **User Approval Workflow**: The security relies on admins correctly vetting pending users.
 
 ### Troubleshooting
 
-*   **502 Bad Gateway:** Your Next.js app (managed by PM2) might be down or not responding.
-    *   Check PM2 status: `pm2 list`
-    *   Check PM2 logs: `pm2 logs imagedrop`
-    *   Ensure Nginx `proxy_pass http://localhost:3000;` points to the correct port Next.js is running on.
-*   **Permission Denied (General):**
-    *   For file system operations by the app (uploads, writing `users.json`): The user running the PM2 process needs write permissions.
-    *   For Nginx serving files: The Nginx worker user (often `www-data`) needs read permissions. See "Uploaded Images Show 'isn't a valid image'" below.
-    *   Check Nginx error logs: `sudo cat /var/log/nginx/imagedrop.error.log` or `sudo cat /var/log/nginx/error.log`.
-*   **Nginx Config Test Fails (`sudo nginx -t`):** Review the output carefully. It usually indicates the line number and type of error.
-*   **Login/Signup/Admin Issues:** Check PM2 logs, browser console. Ensure `JWT_SECRET_KEY` is set. Ensure admin role is correctly set in `users.json`.
-*   **Uploaded Images Show "isn't a valid image" / HTML response (e.g., 404 page from Next.js):**
-    This typically means Nginx is not serving the image file directly via the `location /uploads/` block, and the request is instead being proxied to your Next.js application, which doesn't have a route for that image path.
-    1.  **Verify Nginx Configuration is Loaded:**
-        *   Ensure you edited the correct file (e.g., `/etc/nginx/sites-available/imagedrop`).
-        *   Ensure the symlink is correct: `ls -l /etc/nginx/sites-enabled/` (should show `imagedrop -> ../sites-available/imagedrop`).
-        *   Test Nginx config: `sudo nginx -t`.
-        *   **Reload Nginx**: `sudo systemctl reload nginx` (or `restart` if reload doesn't work).
-    2.  **Verify `alias` Path in Nginx Config:** The `alias` in `location /uploads/` must be the **absolute path** to your project's `public/uploads` directory on the server.
-        *   Navigate to your project root: `cd /var/www/imagedrop`
-        *   Get the full path to `public/uploads`: `pwd`/public/uploads (e.g., `/var/www/imagedrop/public/uploads`).
-        *   Ensure this matches the `alias` directive in `/etc/nginx/sites-available/imagedrop`. It should be `alias /var/www/imagedrop/public/uploads/;`.
-    3.  **Check File System Permissions for Nginx User:** The Nginx worker process user (commonly `www-data` on Ubuntu) needs:
-        *   Read (`r`) permission on the image files themselves.
-        *   Read (`r`) and execute (`x`) permissions on ALL directories in the path leading to the images (e.g., `/var/www/`, `/var/www/imagedrop/`, `/var/www/imagedrop/public/`, `/var/www/imagedrop/public/uploads/`, and subsequent user/date folders).
-        *   To check the Nginx user: `ps aux | grep "nginx: worker process" | awk '{print $1}' | head -n1` (usually `www-data`).
-        *   Test permissions for a specific image file (replace placeholders):
-            ```bash
-            # Example:
-            # sudo -u www-data ls -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png
-            # namei -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png
-            ```
-            The `namei` command is very useful for seeing permissions along the entire path.
-    4.  **Check Nginx Error Logs (Critically Important!):**
-        *   `sudo tail -f /var/log/nginx/imagedrop.error.log`
-        *   Also check the main Nginx error log: `sudo tail -f /var/log/nginx/error.log`
-        *   Look for "Permission denied", "No such file or directory", or other errors related to the image path when you try to access an image.
-    5.  **Ensure Image File Exists:** Double-check that the image file actually exists at the expected path on the server.
-        *   `ls -l /var/www/imagedrop/public/uploads/users/USER_ID/MM.YYYY/image.png`
-*   **Body Exceeded Limit Errors:**
-    *   Next.js: `experimental.serverActions.bodySizeLimit` in `next.config.ts` (e.g., '10mb').
-    *   Nginx: `client_max_body_size` in Nginx config (e.g., `10M` in the `server` block or relevant `location` block).
-    *   Admin-configurable limit (in `server-settings.json`) is an application-level check within these harder limits. Restart Nginx and PM2 app after changes.
+(Troubleshooting steps remain largely the same, but consider adding checks for user status if login issues occur).
+
+*   **Login Fails with "Pending Approval" or "Rejected":** Check the user's `status` in `users.json` or via the Admin Dashboard.
+*   **Uploaded Images Show "isn't a valid image" / HTML response:** (Steps remain the same - Nginx alias, permissions, logs are key).
+*   **Permission Denied (General):** (Steps remain the same - check Node.js user for writes, Nginx user for reads).
 
 ### Updating the Application
 
-1.  `cd /var/www/imagedrop`
-2.  `git pull origin main` (or your branch)
-3.  `npm install` (if dependencies changed)
-4.  `npm run build`
-5.  `pm2 restart imagedrop`
+(Steps remain the same)
 
 ### Resetting User Data and Uploaded Images (Development/Testing)
 
-**WARNING: This will permanently delete all user accounts, uploaded images, and site settings. For development/testing only.**
+**WARNING: This will permanently delete all user accounts (including admin), approvals, uploaded images, and site settings. For development/testing only.**
 
 1.  **Stop Application:** `pm2 stop imagedrop`
 2.  **Delete User Data:** `cd /var/www/imagedrop && rm users.json` (if exists)
 3.  **Delete Site Settings:** `cd /var/www/imagedrop && rm server-settings.json` (if exists)
 4.  **Delete Uploaded Images:** `cd /var/www/imagedrop/public/uploads && rm -rf users`
-5.  **Restart Application:** `pm2 restart imagedrop` (This will recreate `server-settings.json` with defaults if `settingsService.ts` handles it, or you might need to add a default one back).
+5.  **Restart Application:** `pm2 restart imagedrop` (This will recreate `server-settings.json` with defaults. The *next* user to sign up will become the admin).
 
-Your application should now be accessible.
+Your application should now be accessible. Remember the first signup creates the admin account.

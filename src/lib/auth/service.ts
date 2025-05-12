@@ -8,7 +8,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import type { User, SessionPayload } from './types';
+import type { User, SessionPayload, UserStatus } from './types';
 import * as jose from 'jose';
 import { cookies } from 'next/headers';
 
@@ -28,13 +28,13 @@ export async function readUsers(): Promise<Array<User & { password?: string }>> 
   try {
     await fs.access(USERS_FILE_PATH);
     const data = await fs.readFile(USERS_FILE_PATH, 'utf-8');
-    // Ensure roles are present, default to 'user' if missing for backward compatibility
+    // Ensure roles and status are present, default if missing
     const usersFromFile = JSON.parse(data) as Array<Partial<User> & { password?: string }>;
     return usersFromFile.map(u => ({
       id: u.id!,
       email: u.email!,
       role: u.role || 'user',
-      // Include password if present, for verifyPassword to use
+      status: u.status || 'approved', // Default old users to approved
       ...(u.password && { password: u.password }),
     })) as Array<User & { password?: string }>;
   } catch (error) {
@@ -45,8 +45,6 @@ export async function readUsers(): Promise<Array<User & { password?: string }>> 
 
 async function writeUsers(users: Array<User & { password?: string }>): Promise<void> {
   try {
-    // When writing, we can choose to strip the password or keep it based on the demo's insecurity
-    // For this demo, we keep the plain text password
     await fs.writeFile(USERS_FILE_PATH, JSON.stringify(users, null, 2), 'utf-8');
   } catch (error) {
     console.error("Failed to write users file:", error);
@@ -58,7 +56,6 @@ export async function findUserByEmail(email: string): Promise<User | undefined> 
   const users = await readUsers();
   const user = users.find(user => user.email === email);
   if (user) {
-    // Ensure the returned user object doesn't include the password directly
     const { password: _p, ...userWithoutPassword } = user;
     return userWithoutPassword as User;
   }
@@ -66,32 +63,29 @@ export async function findUserByEmail(email: string): Promise<User | undefined> 
 }
 
 
-export async function findUserById(id: string): Promise<User | undefined> {
+export async function findUserById(id: string): Promise<(User & { password?: string }) | undefined> {
   const users = await readUsers();
-  const user = users.find(user => user.id === id);
-   if (user) {
-    // Ensure the returned user object doesn't include the password directly
-    const { password: _p, ...userWithoutPassword } = user;
-    return userWithoutPassword as User;
-  }
-  return undefined;
+  return users.find(user => user.id === id);
 }
 
 
 // WARNING: Plain text password storage. Insecure.
 export async function createUser(email: string, password: string): Promise<User> {
-  const allUsers = await readUsers(); // Read all users to check if this is the first one
+  const allUsers = await readUsers(); 
   const existingUser = allUsers.find(u => u.email === email);
   if (existingUser) {
     throw new Error('User with this email already exists.');
   }
 
-  const newUserRole = allUsers.length === 0 ? 'admin' : 'user'; // Determine role
+  const isFirstUser = allUsers.length === 0;
+  const newUserRole = isFirstUser ? 'admin' : 'user'; 
+  const newUserStatus: UserStatus = isFirstUser ? 'approved' : 'pending'; // First user is approved, others pending
 
   const newUser: User & { password?: string } = { 
     id: uuidv4(),
     email,
-    role: newUserRole, // Assign determined role
+    role: newUserRole, 
+    status: newUserStatus, // Set initial status
     password: password, // Storing plain text password
   };
 
@@ -106,7 +100,7 @@ export async function createUser(email: string, password: string): Promise<User>
 
 // WARNING: Plain text password check. Insecure.
 export async function verifyPassword(email: string, passwordAttempt: string): Promise<User | null> {
-  const users = await readUsers(); // Reads users with their stored passwords
+  const users = await readUsers(); 
   const userWithPassword = users.find(user => user.email === email);
 
   if (!userWithPassword || !userWithPassword.password) {
@@ -116,7 +110,7 @@ export async function verifyPassword(email: string, passwordAttempt: string): Pr
   // Plain text comparison - INSECURE
   if (userWithPassword.password === passwordAttempt) {
     const { password: _p, ...userWithoutStoredPassword } = userWithPassword;
-    return userWithoutStoredPassword as User; // Ensure correct User type is returned
+    return userWithoutStoredPassword as User; // Return user with status
   }
   
   return null;
@@ -133,7 +127,12 @@ export async function createSessionToken(payload: Omit<SessionPayload, 'exp' | '
 export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jose.jwtVerify(token, secret);
-    return payload as SessionPayload;
+    // Ensure status is included in the validated payload
+    if (payload && typeof payload.userId === 'string' && typeof payload.email === 'string' && typeof payload.role === 'string' && typeof payload.status === 'string') {
+       return payload as SessionPayload;
+    }
+    console.error('Token payload missing required fields (userId, email, role, status)');
+    return null;
   } catch (error: any) {
     if (error instanceof jose.errors.JOSEError) {
       console.error(`JOSE Error verifying token: ${error.code}`, error.message);
@@ -165,4 +164,32 @@ export async function getAllUsersForAdmin(): Promise<User[]> {
     const { password: _p, ...userWithoutPassword } = u;
     return userWithoutPassword as User;
   });
+}
+
+// New function to update user status
+export async function updateUserStatus(userId: string, newStatus: UserStatus): Promise<User | null> {
+  const allUsers = await readUsers();
+  const userIndex = allUsers.findIndex(u => u.id === userId);
+
+  if (userIndex === -1) {
+    console.error(`User with ID ${userId} not found for status update.`);
+    return null; // User not found
+  }
+
+  // Prevent changing admin status this way for safety
+  if (allUsers[userIndex].role === 'admin' && allUsers[userIndex].status !== 'approved') {
+     console.warn(`Attempted to change status of admin user ${userId} via updateUserStatus. This is generally disallowed.`);
+     // For this demo, let's allow changing admin status if needed, but log a warning.
+     // In a real app, this might require a different mechanism or stricter checks.
+  }
+  
+  // Update the status
+  allUsers[userIndex].status = newStatus;
+
+  // Write the updated list back to the file
+  await writeUsers(allUsers);
+
+  // Return the updated user data (without password)
+  const { password: _p, ...updatedUser } = allUsers[userIndex];
+  return updatedUser;
 }

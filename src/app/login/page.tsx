@@ -10,9 +10,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import Image from 'next/image';
-import { loginUserAction, signupUserAction, type AuthActionResponse } from '@/app/actions/authActions'; // Updated import
+import { loginUserAction, signupUserAction, type AuthActionResponse } from '@/app/actions/authActions'; 
 import { useAuth } from '@/hooks/use-auth';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react'; // Added AlertCircle
 
 const initialAuthState: AuthActionResponse = { success: false };
 
@@ -27,11 +27,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false); 
+  const [signupMessage, setSignupMessage] = useState<string | null>(null); // State for signup message
 
   useEffect(() => {
     if (!isLoginPending && loginState.success && loginState.user) {
       toast({ title: 'Login Successful', description: "You're now logged in." });
       setUser(loginState.user); 
+      setSignupMessage(null); // Clear any signup message on successful login
       if (loginState.redirectTo) {
         router.push(loginState.redirectTo);
       } else {
@@ -39,42 +41,58 @@ export default function LoginPage() {
       }
     } else if (!isLoginPending && loginState.error) {
       toast({ variant: 'destructive', title: 'Login Failed', description: loginState.error });
+       setSignupMessage(null); // Clear any signup message on login error
     }
     
-    if (!isSignupPending) {
-      setIsSubmitting(isLoginPending);
-    }
+    // Update isSubmitting based on combined pending states
+    setIsSubmitting(isLoginPending || isSignupPending); 
+
   }, [loginState, isLoginPending, isSignupPending, toast, router, setUser]);
 
   useEffect(() => {
-    if (!isSignupPending && signupState.success && signupState.user) {
-      toast({ title: 'Signup Successful', description: "Account created and you're logged in." });
+     // Clear previous signup message when starting a new signup attempt
+     if(isSignupPending) {
+        setSignupMessage(null);
+     }
+
+    if (!isSignupPending && signupState.success && signupState.user) { // Successful signup AND logged in (admin case)
+      toast({ title: 'Admin Signup Successful', description: "Admin account created and you're logged in." });
       setUser(signupState.user); 
+      setSignupMessage(null); // Clear any message
       if (signupState.redirectTo) {
         router.push(signupState.redirectTo);
       } else {
         router.push('/');
       }
-    } else if (!isSignupPending && signupState.error) {
+    } else if (!isSignupPending && signupState.success && signupState.message) { // Successful signup but pending
+       // Don't toast here, show the message in the UI instead
+       setSignupMessage(signupState.message); 
+       // Clear form maybe? Or leave it so they know what they signed up with.
+       // setEmail(''); // Optional: clear form on pending signup
+       // setPassword(''); // Optional: clear form on pending signup
+    } else if (!isSignupPending && signupState.error) { // Signup failed
       toast({ variant: 'destructive', title: 'Signup Failed', description: signupState.error });
+       setSignupMessage(null); // Clear any message on error
     }
+    
+    // Update isSubmitting based on combined pending states
+     setIsSubmitting(isLoginPending || isSignupPending);
 
-    if(!isLoginPending) {
-      setIsSubmitting(isSignupPending);
-    }
   }, [signupState, isSignupPending, isLoginPending, toast, router, setUser]);
 
 
   const handleLoginSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setSignupMessage(null); // Clear signup message on login attempt
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
-    startTransition(() => { // Ensure Server Action is called within a transition
+    startTransition(() => { 
       loginFormAction(formData);
     });
   };
 
   const handleSignupClick = () => {
+     setSignupMessage(null); // Clear previous message on new signup attempt
     if (!email || !password) {
         toast({ variant: 'destructive', title: 'Signup Failed', description: 'Email and password are required.' });
         return;
@@ -83,7 +101,7 @@ export default function LoginPage() {
     const formData = new FormData();
     formData.append('email', email);
     formData.append('password', password);
-    startTransition(() => { // Ensure Server Action is called within a transition
+    startTransition(() => { 
       signupFormAction(formData);
     });
   };
@@ -98,9 +116,16 @@ export default function LoginPage() {
       <Card className="w-full max-w-md shadow-2xl">
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-bold text-primary">Login to ImageDrop</CardTitle>
-          <CardDescription>Enter your credentials to access your images.</CardDescription>
+          <CardDescription>Enter your credentials or sign up.</CardDescription>
         </CardHeader>
         <CardContent>
+           {/* Display Signup Message */}
+           {signupMessage && (
+             <div className="mb-4 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800 flex items-start">
+               <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0 text-yellow-600" />
+               <span>{signupMessage}</span>
+             </div>
+           )}
           <form onSubmit={handleLoginSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -112,7 +137,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={isLoginPending || isSignupPending}
+                disabled={isSubmitting}
               />
             </div>
             <div className="space-y-2">
@@ -125,11 +150,11 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                disabled={isLoginPending || isSignupPending}
+                disabled={isSubmitting}
               />
             </div>
             { (loginState.error && !isLoginPending) && <p className="text-sm text-destructive">{loginState.error}</p>}
-            <Button type="submit" className="w-full" disabled={isLoginPending || isSignupPending}>
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isLoginPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isLoginPending ? 'Logging in...' : 'Login'}
             </Button>
@@ -137,7 +162,7 @@ export default function LoginPage() {
         </CardContent>
          <CardFooter className="flex flex-col items-center space-y-2 pt-4">
            <p className="text-sm text-muted-foreground">Don't have an account?</p>
-            <Button variant="outline" onClick={handleSignupClick} className="w-full" disabled={isLoginPending || isSignupPending || !email || !password}>
+            <Button variant="outline" onClick={handleSignupClick} className="w-full" disabled={isSubmitting || !email || !password}>
               {isSignupPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isSignupPending ? 'Signing up...' : 'Sign Up with Email & Password'}
             </Button>
@@ -147,4 +172,3 @@ export default function LoginPage() {
     </div>
   );
 }
-

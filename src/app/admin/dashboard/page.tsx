@@ -11,9 +11,10 @@ import { AlertCircle, Users, Settings as SettingsIcon } from 'lucide-react';
 
 
 async function UserManagementSection() {
-  const usersResponse = await getAllUsersWithActivityAction();
+  // Renamed response variable for clarity
+  const usersListResponse = await getAllUsersWithActivityAction();
 
-  if (!usersResponse.success || !usersResponse.users) {
+  if (!usersListResponse.success || !usersListResponse.users) {
     return (
       <Card>
         <CardHeader>
@@ -23,7 +24,7 @@ async function UserManagementSection() {
         <CardContent>
           <div className="flex items-center text-destructive">
             <AlertCircle className="w-5 h-5 mr-2" />
-            <p>{usersResponse.error || 'Could not load users.'}</p>
+            <p>{usersListResponse.error || 'Could not load users.'}</p>
           </div>
         </CardContent>
       </Card>
@@ -33,10 +34,11 @@ async function UserManagementSection() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> User Management</CardTitle>
-        <CardDescription>Overview of registered users and their activity.</CardDescription>
+        <CardDescription>Overview of registered users, their status, and activity.</CardDescription>
       </CardHeader>
       <CardContent>
-        <UserTable users={usersResponse.users} />
+        {/* UserTable now handles displaying status and actions */}
+        <UserTable users={usersListResponse.users} /> 
       </CardContent>
     </Card>
   );
@@ -86,7 +88,8 @@ export default function AdminDashboardPage() {
       
       <Separator />
 
-      <div className="grid gap-8 md:grid-cols-1 lg:grid-cols-2">
+      {/* Changed grid layout to stack vertically on smaller screens, then one column */}
+      <div className="grid gap-8 md:grid-cols-1"> 
         <Suspense fallback={<UserManagementSkeleton />}>
           <UserManagementSection />
         </Suspense>
@@ -106,7 +109,9 @@ function UserManagementSkeleton() {
         <CardDescription>View and manage application users.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Skeleton className="h-10 w-full" />
+        {/* Adjust skeleton for potentially more columns */}
+        <Skeleton className="h-10 w-full" /> 
+        <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />

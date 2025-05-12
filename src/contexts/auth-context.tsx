@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react';
 import { createContext, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { User } from '@/lib/auth/types'; // User type now includes 'role'
+import type { User } from '@/lib/auth/types'; // User type now includes 'role' and 'status'
 import { getCurrentUserAction } from '@/app/actions/authActions';
 
 interface AuthContextType {
@@ -32,7 +32,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setLoading(true); 
       try {
         const currentUser = await getCurrentUserAction();
-        setUser(currentUser);
+        // getCurrentUserAction now returns null if user is not approved
+        setUser(currentUser); 
       } catch (error) {
         console.error("Failed to fetch current user:", error);
         setUser(null); 
