@@ -13,6 +13,7 @@ import * as jose from 'jose';
 import { cookies } from 'next/headers';
 
 const USERS_FILE_PATH = path.join(process.cwd(), 'users.json');
+const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
 const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY || 'your-super-secret-jwt-key-change-me';
 const JWT_EXPIRATION_TIME = '2h'; // Token expiration time
 
@@ -54,7 +55,7 @@ async function writeUsers(users: Array<User & { password?: string }>): Promise<v
 
 export async function findUserByEmail(email: string): Promise<User | undefined> {
   const users = await readUsers();
-  const user = users.find(user => user.email === email);
+  const user = users.find(u => u.email === email);
   if (user) {
     const { password: _p, ...userWithoutPassword } = user;
     return userWithoutPassword as User;
@@ -166,8 +167,8 @@ export async function getAllUsersForAdmin(): Promise<User[]> {
   });
 }
 
-// New function to update user status
-export async function updateUserStatus(userId: string, newStatus: UserStatus): Promise<User | null> {
+// Function to update user status
+export async function updateUserStatusService(userId: string, newStatus: UserStatus): Promise<User | null> {
   const allUsers = await readUsers();
   const userIndex = allUsers.findIndex(u => u.id === userId);
 
@@ -175,12 +176,13 @@ export async function updateUserStatus(userId: string, newStatus: UserStatus): P
     console.error(`User with ID ${userId} not found for status update.`);
     return null; // User not found
   }
-
-  // Prevent changing admin status this way for safety
-  if (allUsers[userIndex].role === 'admin' && allUsers[userIndex].status !== 'approved') {
-     console.warn(`Attempted to change status of admin user ${userId} via updateUserStatus. This is generally disallowed.`);
-     // For this demo, let's allow changing admin status if needed, but log a warning.
-     // In a real app, this might require a different mechanism or stricter checks.
+  
+  // If trying to change the status of an admin user (other than to 'approved' if they were somehow not)
+  if (allUsers[userIndex].role === 'admin' && newStatus !== 'approved') {
+     // An admin's status should generally remain 'approved'.
+     // Changing an admin's status to 'pending' or 'rejected' could lock them out.
+     // For this demo, we'll log a warning. In a real app, this might be disallowed or require special handling.
+     console.warn(`Attempt to change status of admin user ${userId} to '${newStatus}'. This is usually not recommended.`);
   }
   
   // Update the status
@@ -192,4 +194,51 @@ export async function updateUserStatus(userId: string, newStatus: UserStatus): P
   // Return the updated user data (without password)
   const { password: _p, ...updatedUser } = allUsers[userIndex];
   return updatedUser;
+}
+
+// New function to delete a user and their related data
+export async function deleteUserAndRelatedData(userIdToDelete: string): Promise<boolean> {
+  let allUsers = await readUsers();
+  const userIndex = allUsers.findIndex(u => u.id === userIdToDelete);
+
+  if (userIndex === -1) {
+    console.warn(`User with ID ${userIdToDelete} not found for deletion.`);
+    return false; // User not found
+  }
+
+  // Remove user from the array
+  const deletedUser = allUsers.splice(userIndex, 1)[0];
+  await writeUsers(allUsers);
+  console.log(`User ${deletedUser.email} (ID: ${userIdToDelete}) removed from users.json.`);
+
+  // Delete user's upload directory
+  const userUploadDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userIdToDelete);
+  const resolvedUserUploadDir = path.resolve(userUploadDir);
+  const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
+
+  if (!(resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.sep) ||
+        resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep)) ||
+        resolvedUserUploadDir === resolvedUploadDirBase // Prevent deleting the base users folder
+     ) {
+      console.error(`Security alert: Attempt to delete directory outside designated user uploads area. Path: ${userUploadDir}, UserID: ${userIdToDelete}`);
+      // Even if user record was deleted, prevent file system damage.
+      // The function will return true because user record deletion was successful.
+      // But log this critical error.
+      return true; 
+  }
+
+  try {
+    await fs.access(resolvedUserUploadDir); // Check if directory exists
+    await fs.rm(resolvedUserUploadDir, { recursive: true, force: true });
+    console.log(`User upload directory ${resolvedUserUploadDir} deleted successfully.`);
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
+      console.log(`User upload directory ${resolvedUserUploadDir} not found, nothing to delete.`);
+    } else {
+      console.error(`Error deleting user upload directory ${resolvedUserUploadDir}:`, error);
+      // Decide if this should be a fatal error for the operation.
+      // For now, user record is deleted, so we can return true, but log the fs error.
+    }
+  }
+  return true;
 }
