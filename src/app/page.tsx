@@ -46,7 +46,9 @@ export default function Home() {
 
     setIsLoadingInitialImages(true);
     try {
-      const userImagesFromServer = await getUserImages(LATEST_IMAGES_COUNT); 
+      // Corrected call: Pass undefined for userIdFromSession to use the session user,
+      // and LATEST_IMAGES_COUNT as the limit.
+      const userImagesFromServer = await getUserImages(undefined, LATEST_IMAGES_COUNT); 
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id, 
         name: img.name, 
@@ -82,11 +84,11 @@ export default function Home() {
     // We need to construct an ID like: `userId/MM.YYYY/filename.ext`
     const serverFilename = imageFile.url.split('/').pop() || imageFile.name; 
     // imageFile.url.split('/') -> ['', 'uploads', 'users', 'USER_ID', 'MM.YYYY', 'filename.ext']
-    // We need 'MM.YYYY/filename.ext', which starts at index 4
-    const dateAndFilePart = imageFile.url.split('/').slice(4).join('/');
+    // We need 'USER_ID/MM.YYYY/filename.ext', which starts at index 3
+    const userAndPathPart = imageFile.url.split('/').slice(3).join('/');
     
     const newImage: DisplayImage = {
-      id: `${imageFile.userId}/${dateAndFilePart}`, // Corrected ID construction
+      id: userAndPathPart, // Corrected ID construction
       name: serverFilename, 
       previewSrc: imageFile.url, 
       url: imageFile.url,
