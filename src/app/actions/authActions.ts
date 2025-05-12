@@ -63,7 +63,8 @@ export async function signupUserAction(
     const newUser = await createUser(validation.data.email, validation.data.password);
     
     const token = await createSessionToken({ userId: newUser.id, email: newUser.email });
-    cookies().set('session_token', token, {
+    const cookieStore = await cookies();
+    cookieStore.set('session_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 2, // 2 hours
@@ -104,7 +105,8 @@ export async function loginUserAction(
     }
 
     const token = await createSessionToken({ userId: user.id, email: user.email });
-    cookies().set('session_token', token, {
+    const cookieStore = await cookies();
+    cookieStore.set('session_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 2, // 2 hours
@@ -121,7 +123,8 @@ export async function loginUserAction(
 
 export async function logoutUserAction(): Promise<AuthActionResponse> {
   try {
-    cookies().delete('session_token');
+    const cookieStore = await cookies();
+    cookieStore.delete('session_token');
     return { success: true, redirectTo: '/login' }; 
   } catch (error: any) {
     console.error('Logout error:', error);
@@ -132,7 +135,7 @@ export async function logoutUserAction(): Promise<AuthActionResponse> {
 
 
 export async function getCurrentUserAction(): Promise<User | null> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const token = cookieStore.get('session_token')?.value;
 
   if (!token) {
@@ -142,7 +145,8 @@ export async function getCurrentUserAction(): Promise<User | null> {
   const payload = await verifyTokenService(token);
   if (!payload || !payload.userId || !payload.email) {
     // Invalid token payload, clear cookie
-    cookies().delete('session_token');
+    // No need to await cookies() again if cookieStore is already available and awaited
+    cookieStore.delete('session_token');
     return null;
   }
 
@@ -154,6 +158,8 @@ export async function getCurrentUserAction(): Promise<User | null> {
   }
   
   // If user not found in DB, or ID mismatch, consider the session invalid
-  cookies().delete('session_token');
+  // No need to await cookies() again if cookieStore is already available and awaited
+  cookieStore.delete('session_token');
   return null;
 }
+

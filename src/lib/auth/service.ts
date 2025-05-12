@@ -130,9 +130,10 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 }
 
 export async function getCurrentUserIdFromSession(): Promise<string | null> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   // "Read" the cookie store by checking for the existence of the cookie first,
   // as recommended for Server Actions before using .get().
+  // This check can be done after awaiting cookies()
   if (!cookieStore.has('session_token')) {
     return null;
   }
@@ -143,3 +144,4 @@ export async function getCurrentUserIdFromSession(): Promise<string | null> {
   const payload = await verifySessionToken(token);
   return payload?.userId || null;
 }
+
