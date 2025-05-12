@@ -103,24 +103,26 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
 *   Ensure the Node.js process (run by PM2) has write permissions to the `public/uploads` directory and can create/write to `users.json` and `server-settings.json` in `/var/www/imagedrop/`.
 *   The Nginx user (typically `www-data`) needs read permissions for the entire path to the uploaded files to serve them.
 
-### Step 5.1: Initial Setup for Admin User (Manual)
+### Step 5.1: Admin User Setup
 
-After the first user signs up (or if you want to designate an existing one):
+The **first user who signs up** for the application will automatically be designated as an **administrator**. This user will have access to the Admin Dashboard at `/admin/dashboard`.
+
+If you need to change the admin user or assign admin rights to another existing user manually (e.g., if the first admin account needs to be changed or if `users.json` was populated manually):
 1.  Stop your application if it's running: `pm2 stop imagedrop`
 2.  Open the `users.json` file located in your project root (e.g., `/var/www/imagedrop/users.json`):
     ```bash
     nano /var/www/imagedrop/users.json
     ```
-3.  Find the user entry you want to make an administrator. It will look something like this:
+3.  Find the user entry you want to make an administrator. It will look like:
     ```json
     {
       "id": "some-uuid-string",
       "email": "user@example.com",
       "password": "theirplaintextpassword",
-      "role": "user"
+      "role": "user" 
     }
     ```
-4.  Change the `"role": "user"` to `"role": "admin"`:
+4.  To make a user an admin, ensure their entry has `"role": "admin"`. To demote an admin, change it to `"role": "user"`.
     ```json
     {
       "id": "some-uuid-string",
@@ -132,7 +134,8 @@ After the first user signs up (or if you want to designate an existing one):
 5.  Save the file and exit the editor.
 6.  Restart your application: `pm2 restart imagedrop`
 
-The user is now an administrator and can access the `/admin/dashboard`.
+The user with "admin" role can then access the `/admin/dashboard`.
+
 
 ### Step 6: Build the Application
 
@@ -372,4 +375,3 @@ If Certbot modifies your Nginx config, ensure the `location /uploads/` and `loca
 5.  **Restart Application:** `pm2 restart imagedrop` (This will recreate `server-settings.json` with defaults if `settingsService.ts` handles it, or you might need to add a default one back).
 
 Your application should now be accessible.
-```

@@ -24,7 +24,7 @@ if (JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me' && process.env.NODE
 }
 const secret = new TextEncoder().encode(JWT_SECRET_KEY);
 
-export async function readUsers(): Promise<User[]> {
+export async function readUsers(): Promise<Array<User & { password?: string }>> {
   try {
     await fs.access(USERS_FILE_PATH);
     const data = await fs.readFile(USERS_FILE_PATH, 'utf-8');
@@ -36,7 +36,7 @@ export async function readUsers(): Promise<User[]> {
       role: u.role || 'user',
       // Include password if present, for verifyPassword to use
       ...(u.password && { password: u.password }),
-    })) as User[];
+    })) as Array<User & { password?: string }>;
   } catch (error) {
     // If file doesn't exist or is invalid, return empty array
     return [];
@@ -59,7 +59,7 @@ export async function findUserByEmail(email: string): Promise<User | undefined> 
   const user = users.find(user => user.email === email);
   if (user) {
     // Ensure the returned user object doesn't include the password directly
-    const { password: _p, ...userWithoutPassword } = user as any;
+    const { password: _p, ...userWithoutPassword } = user;
     return userWithoutPassword as User;
   }
   return undefined;
@@ -71,7 +71,7 @@ export async function findUserById(id: string): Promise<User | undefined> {
   const user = users.find(user => user.id === id);
    if (user) {
     // Ensure the returned user object doesn't include the password directly
-    const { password: _p, ...userWithoutPassword } = user as any;
+    const { password: _p, ...userWithoutPassword } = user;
     return userWithoutPassword as User;
   }
   return undefined;
@@ -80,22 +80,24 @@ export async function findUserById(id: string): Promise<User | undefined> {
 
 // WARNING: Plain text password storage. Insecure.
 export async function createUser(email: string, password: string): Promise<User> {
-  const users = await readUsers(); // Read users, potentially with passwords
-  const existingUser = users.find(u => u.email === email);
+  const allUsers = await readUsers(); // Read all users to check if this is the first one
+  const existingUser = allUsers.find(u => u.email === email);
   if (existingUser) {
     throw new Error('User with this email already exists.');
   }
 
+  const newUserRole = allUsers.length === 0 ? 'admin' : 'user'; // Determine role
+
   const newUser: User & { password?: string } = { 
     id: uuidv4(),
     email,
-    role: 'user', // Default role for new users
+    role: newUserRole, // Assign determined role
     password: password, // Storing plain text password
   };
 
-  users.push(newUser);
+  allUsers.push(newUser);
   
-  await writeUsers(users);
+  await writeUsers(allUsers);
   
   // Return user without password field for external use
   const { password: _p, ...userToReturn } = newUser;
@@ -105,7 +107,7 @@ export async function createUser(email: string, password: string): Promise<User>
 // WARNING: Plain text password check. Insecure.
 export async function verifyPassword(email: string, passwordAttempt: string): Promise<User | null> {
   const users = await readUsers(); // Reads users with their stored passwords
-  const userWithPassword = users.find(user => user.email === email) as (User & { password?: string }) | undefined;
+  const userWithPassword = users.find(user => user.email === email);
 
   if (!userWithPassword || !userWithPassword.password) {
     return null; // User not found or password not stored
@@ -160,7 +162,7 @@ export async function getAllUsersForAdmin(): Promise<User[]> {
   const users = await readUsers();
   // Return users without their passwords
   return users.map(u => {
-    const { password: _p, ...userWithoutPassword } = u as any;
+    const { password: _p, ...userWithoutPassword } = u;
     return userWithoutPassword as User;
   });
 }
