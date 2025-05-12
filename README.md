@@ -136,12 +136,12 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
         {
           "id": "some-uuid-string",
           "email": "user@example.com",
-          "role": "user", 
-          "status": "approved", 
+          "role": "user",
+          "status": "approved",
           "maxImages": null,
           "maxSingleUploadSizeMB": null,
           "maxTotalStorageMB": null,
-          "password": "theirplaintextpassword" 
+          "password": "theirplaintextpassword"
         }
         ```
     4.  To make a user an admin, ensure `"role": "admin"` and `"status": "approved"`. To demote, set `"role": "user"`. Adjust limit fields as needed (`null` means no specific limit).
@@ -196,13 +196,13 @@ server {
     server_name your_domain.com www.your_domain.com; # Replace with your domain or server IP
 
     access_log /var/log/nginx/imagedrop.access.log;
-    error_log /var/log/nginx/imagedrop.error.log; 
+    error_log /var/log/nginx/imagedrop.error.log;
 
     # Max body size for uploads (e.g., 10MB). Must be >= Next.js app bodySizeLimit.
     client_max_body_size 10M;
 
     location / {
-        proxy_pass http://localhost:3000; 
+        proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -211,18 +211,24 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 600s; 
-        proxy_send_timeout 600s; 
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
     }
 
     # Serve uploaded images directly from the filesystem
     location /uploads/ {
         # IMPORTANT: Ensure this alias path is correct and points to the directory *containing* the 'users' subfolder.
-        alias /var/www/imagedrop/public/uploads/; 
-        autoindex off; 
-        expires 1M;    
-        access_log off; 
-        add_header Cache-Control "public";
+        alias /var/www/imagedrop/public/uploads/;
+        autoindex off;
+        expires 1M;
+        access_log off;
+
+        # Instruct clients/proxies to revalidate frequently, helps ensure new files are seen
+        add_header Cache-Control "public, must-revalidate, proxy-revalidate";
+
+        # Disable Nginx's file cache for this location if experiencing delays showing new files
+        # This might slightly impact performance but ensures freshness. Test if needed.
+        open_file_cache off;
 
         # Deny execution of potentially harmful files if they somehow get uploaded
         location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
@@ -235,12 +241,12 @@ server {
 
     # Serve Next.js static assets efficiently
     location /_next/static/ {
-        proxy_cache_bypass $http_upgrade; 
+        proxy_cache_bypass $http_upgrade;
         proxy_pass http://localhost:3000/_next/static/;
-        expires max; 
+        expires max;
         add_header Cache-Control "public";
     }
-    
+
     # Optional: SSL Configuration (Certbot example)
     # If using SSL (recommended for production):
     # listen 443 ssl http2;
@@ -249,7 +255,7 @@ server {
     # ssl_certificate_key /etc/letsencrypt/live/your_domain.com/privkey.pem;
     # include /etc/letsencrypt/options-ssl-nginx.conf;
     # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    # 
+    #
     # # Redirect HTTP to HTTPS
     # if ($scheme != "https") {
     #     return 301 https://$host$request_uri;
@@ -270,7 +276,7 @@ sudo systemctl restart nginx
 
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx HTTP' 
+sudo ufw allow 'Nginx HTTP'
 # If using SSL: sudo ufw allow 'Nginx HTTPS'
 sudo ufw enable
 sudo ufw status
@@ -287,7 +293,7 @@ sudo certbot --nginx -d your_domain.com -d www.your_domain.com # Replace with yo
 # Certbot will automatically modify your Nginx config for SSL.
 sudo systemctl restart nginx
 # Test automatic renewal (optional)
-sudo certbot renew --dry-run 
+sudo certbot renew --dry-run
 ```
 
 ### Security Considerations for Local Setup
@@ -312,7 +318,11 @@ sudo certbot renew --dry-run
 
 *   **Login Fails:** Check user `status` in `users.json` or Admin Dashboard (must be `approved`). Verify password. Check JWT secret consistency.
 *   **Upload Fails:** Check file size against global and user limits. Check directory permissions (`/var/www/imagedrop/public/uploads/users/`). Check Nginx `client_max_body_size` and Next.js `bodySizeLimit`. Check `pm2 logs imagedrop` and Nginx error logs (`/var/log/nginx/imagedrop.error.log`).
-*   **Images Not Displaying (404/403):** Verify Nginx `location /uploads/` alias path. Check file/directory read permissions for the Nginx user (`www-data`). Check Nginx access/error logs. Ensure files actually exist on the server at the expected path.
+*   **Images Not Displaying (404/403/Invalid Image Error):**
+    *   Verify Nginx `location /uploads/` alias path is correct.
+    *   Check file/directory read permissions for the Nginx user (`www-data`). Check Nginx access/error logs (`/var/log/nginx/imagedrop.access.log`, `/var/log/nginx/imagedrop.error.log`).
+    *   Ensure files actually exist on the server at the expected path (`/var/www/imagedrop/public/uploads/users/...`).
+    *   **If images appear after `pm2 restart imagedrop` but not immediately after upload:** This could be an Nginx caching issue. Check the `location /uploads/` block in your Nginx config (`/etc/nginx/sites-available/imagedrop`). Ensure it includes directives like `open_file_cache off;` and `add_header Cache-Control "public, must-revalidate, proxy-revalidate";` as shown in the example config above. Restart Nginx (`sudo systemctl restart nginx`) after changes.
 *   **Permission Denied (General):** Check Node.js process owner (PM2 user) for write permissions to `users.json`, `server-settings.json`, and `public/uploads/users/`. Check Nginx user (`www-data`) for read permissions on `public/uploads/`. Use `ls -l` to inspect.
 *   **502 Bad Gateway:** The Node.js application (PM2) might be crashed or not running. Check `pm2 status` and `pm2 logs imagedrop`.
 
