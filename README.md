@@ -364,28 +364,27 @@ sudo certbot renew --dry-run
 
 *   **Login Fails:** Check `users.json` status (must be `approved`). Verify `JWT_SECRET_KEY`. Check `pm2 logs imagedrop`.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image for ... received text/html")**:
-    *   This error strongly indicates Nginx is NOT serving the static image file from the `/uploads/` location block. Instead, the request is being proxied to the Next.js application (via `location /`), which returns an HTML page (likely a 404 error from Next.js itself, as Next.js doesn't have a page route for `/uploads/...`). This happens when the `next/image` component tries to fetch the source image for optimization.
+    *   This error strongly indicates Nginx is NOT serving the static image file from the `/uploads/` location block. Instead, the request (often from the Next.js image optimizer) is being proxied to the Next.js application (via `location /`), which returns an HTML page (likely a 404 from Next.js, as it doesn't have a route for `/uploads/...`).
     *   **Primary Causes & Solutions:**
-        1.  **Permissions for `www-data`**: This is the most common cause. The Nginx user (`www-data`) must have:
+        1.  **Permissions for `www-data` (Nginx User)**: This is the most common cause. The Nginx user (`www-data`) must have:
             *   Read (`r`) permission on the image file itself.
             *   Execute (`x`) permission on ALL parent directories leading to the image file (e.g., `public`, `uploads`, `users`, `<userId>`, `<folderName>`, `YYYY`, `MM`, `DD`).
             *   **Action**:
-                *   **IMMEDIATELY AFTER A FAILED UPLOAD (when `next/image` shows the error):**
+                *   **IMMEDIATELY AFTER A FAILED UPLOAD (when `next/image` shows the error or a broken image):**
                     *   SSH into your server.
                     *   Identify the exact path to the newly uploaded image file (e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>`).
                     *   Check effective permissions for `www-data` along the entire path:
                         ```bash
                         sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
                         ```
-                        This command shows if `www-data` can traverse each directory and read the file. Look for `r` and `x` on directories, and `r` on the file for `www-data`.
+                        This command shows if `www-data` can traverse each directory and read the file. Look for `r` and `x` on directories, and `r` on the file for `www-data`. If you see `permission denied` at any point for `www-data`, that's the problem.
                     *   Check ACLs if you used them (recommended):
                         ```bash
                         getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
                         getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/
                         # ... and so on for parent directories up to public/uploads
                         ```
-                        Ensure `www-data` has `r-x` (or `rwx` via default ACL) on directories and `r--` (or `rw-` via default ACL) on the file.
-                    *   The `setfacl -dR -m u:www-data:rx public/uploads` command is CRITICAL for *newly created* files/folders to inherit `rx` for `www-data`. If `namei` or `getfacl` show issues immediately after upload, this default ACL might not be applying correctly or there's a timing issue with its propagation that Nginx encounters.
+                        Ensure `user:www-data` has `r-x` (or `rwx` via default ACL) on directories and `r--` (or `rw-` via default ACL) on the file. The default ACL `default:user:www-data:r-x` on `public/uploads` and its subdirectories is critical for *newly created* items to inherit these permissions.
         2.  **Nginx Configuration Not Loaded/Correct**:
             *   **Action**: Always run `sudo nginx -t` to test your Nginx configuration for syntax errors. Then, `sudo systemctl reload nginx`. If issues persist, try `sudo systemctl restart nginx` as it's a more forceful way to apply changes.
         3.  **Incorrect Nginx `alias` Path**:
@@ -416,7 +415,7 @@ sudo certbot renew --dry-run
 
 This guide outlines deploying ImageDrop on an Ubuntu server (e.g., 20.04, 22.04 LTS) using Apache as a reverse proxy and PM2 as a process manager. Steps 1-8 (Prerequisites, Node/PM2 install, App Clone, Env Vars, Build, Admin User, File Permissions, PM2 Start) are identical to the Nginx setup.
 
-**Follow Steps 1-8 from the Nginx section above first.**
+**Follow Steps 1-8 from the Nginx section above first.** The "File Ownership and Permissions" (Step 7) is particularly important and applies to Apache as well (replace references to Nginx user with Apache user, typically `www-data`).
 
 ### 9. Install and Configure Apache
 
@@ -471,6 +470,7 @@ Paste the following configuration. Replace `your_domain.com` with your actual do
         </FilesMatch>
 
         # Cache-Control headers to ensure freshness for uploaded content
+        # These settings tell browsers and proxies to always revalidate.
         Header set Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0"
         
         # Prevent MIME type sniffing
@@ -479,8 +479,7 @@ Paste the following configuration. Replace `your_domain.com` with your actual do
 
     # Efficiently serve Next.js static assets (versioned, can be cached aggressively by client)
     # For Apache, often Next.js handles its own static assets well through the proxy.
-    # If you experience issues or want Apache to handle them, you might need a more specific Alias for /_next/static.
-    # However, proxying them is usually fine.
+    # If you want Apache to handle them with more aggressive caching for clients:
     ProxyPass /_next/static/ http://localhost:3000/_next/static/
     ProxyPassReverse /_next/static/ http://localhost:3000/_next/static/
     <Location /_next/static/>
@@ -535,7 +534,7 @@ If Certbot configures SSL, your `/etc/apache2/sites-available/imagedrop-le-ssl.c
 
 *   **`JWT_SECRET_KEY`**: Must be strong and unique.
 *   **`users.json` Passwords**: **PLAIN TEXT - INSECURE**.
-*   **File Permissions**: Critical. `node_user` needs write access for uploads and JSON files. Apache's user (`www-data`) needs read access to images in `public/uploads/...` and execute access on directories in the path. **Default ACLs (`setfacl -dR`) are vital (see Nginx Step 7).**
+*   **File Permissions**: Critical. `node_user` needs write access for uploads and JSON files. Apache's user (typically `www-data`) needs read access to images in `public/uploads/...` and execute access on directories in the path. **Default ACLs (`setfacl -dR` from Nginx Step 7, replacing `Nginx user` with `Apache user` where appropriate) are vital.**
 *   **Apache Configuration**:
     *   `LimitRequestBody` matches Next.js `bodySizeLimit`.
     *   `/uploads/` Alias and Directory block serve images correctly, deny non-image files, and have appropriate caching headers. **Always run `sudo apache2ctl configtest && sudo systemctl reload apache2` (or `restart`) after Apache config changes.**
@@ -546,13 +545,38 @@ If Certbot configures SSL, your `/etc/apache2/sites-available/imagedrop-le-ssl.c
 
 *   **Login Fails:** Check `users.json`, `JWT_SECRET_KEY`, `pm2 logs imagedrop`.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
-    *   This typically means Apache is not serving the image file from `/uploads/` directly, and the request is being proxied to Next.js.
-    *   **Permissions for `www-data`**: Apache user (`www-data`) must have read (`r`) on the image and execute (`x`) on all parent directories. Verify with `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/.../image.png`. Check ACLs with `getfacl`.
-    *   **Apache Configuration**:
-        *   Ensure `Alias /uploads/ /var/www/imagedrop/public/uploads/` is correct.
-        *   Ensure `<Directory /var/www/imagedrop/public/uploads/>` block is correctly configured with `Require all denied` and specific `FilesMatch` for images.
-        *   Test config with `sudo apache2ctl configtest` and reload/restart Apache.
-    *   **Apache Logs**: Check `/var/log/apache2/imagedrop_error.log` and `access.log`.
+    *   This error strongly indicates Apache is NOT serving the static image file from the `/uploads/` Alias and Directory block. Instead, the request (often from the Next.js image optimizer) is being proxied to the Next.js application (via `ProxyPass /`), which returns an HTML page (likely a 404 from Next.js).
+    *   **Primary Causes & Solutions (Similar to Nginx):**
+        1.  **Permissions for `www-data` (Apache User)**: This is the most common cause. The Apache user (`www-data`) must have:
+            *   Read (`r`) permission on the image file itself.
+            *   Execute (`x`) permission on ALL parent directories leading to the image file (e.g., `public`, `uploads`, `users`, `<userId>`, `<folderName>`, `YYYY`, `MM`, `DD`).
+            *   **Action**:
+                *   **IMMEDIATELY AFTER A FAILED UPLOAD (when `next/image` shows the error or a broken image):**
+                    *   SSH into your server.
+                    *   Identify the exact path to the newly uploaded image file.
+                    *   Check effective permissions for `www-data` along the entire path:
+                        ```bash
+                        sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                        ```
+                        Look for `r` and `x` on directories, and `r` on the file for `www-data`.
+                    *   Check ACLs if you used them (recommended, see Nginx Step 7):
+                        ```bash
+                        getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                        # ... and parent directories
+                        ```
+                        Ensure `user:www-data` has `r-x` on directories and `r--` on the file. The default ACL `default:user:www-data:r-x` on `public/uploads` is critical.
+        2.  **Apache Configuration Not Loaded/Correct**:
+            *   **Action**: Always run `sudo apache2ctl configtest` to test your Apache configuration. Then, `sudo systemctl reload apache2`. If issues persist, try `sudo systemctl restart apache2`.
+        3.  **Incorrect Apache `Alias` Path or `<Directory>` Block**:
+            *   Ensure the `Alias /uploads/ /var/www/imagedrop/public/uploads/` path is correct.
+            *   Ensure the `<Directory /var/www/imagedrop/public/uploads/>` block is correctly configured to allow access to image files and deny others.
+        4.  **Apache Caching Directives**: The `Header set Cache-Control "no-cache, ..."` directive helps. Apache doesn't have a direct equivalent to Nginx's `open_file_cache off` that commonly causes this specific problem, but ensure no other aggressive caching modules are interfering for this Alias.
+    *   **Check Apache Logs (at the moment of failure for `next/image`)**:
+        *   `tail -f /var/log/apache2/imagedrop_error.log` (or your site-specific error log)
+        *   `tail -f /var/log/apache2/imagedrop_access.log` (or your site-specific access log)
+        *   If error log shows "permission denied" or "file not found" for the image, it's a permission/path issue for Apache.
+        *   If access log shows the `/uploads/...` URL request getting a 200 status from the Next.js proxy (`http://localhost:3000`) instead of being served directly by Apache, it confirms Apache isn't serving the static file.
+    *   **Body Size Limits:** Check Apache `LimitRequestBody` vs. Next.js `bodySizeLimit`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop`.
 *   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop`.
 
@@ -572,12 +596,10 @@ If Certbot configures SSL, your `/etc/apache2/sites-available/imagedrop-le-ssl.c
 **WARNING: This deletes all users, settings, shares, and uploaded images.**
 
 1.  `pm2 stop imagedrop`
-2.  `cd /var/www/imagedrop`
+2.  `cd /var/www/imagedrop` (or your application directory)
 3.  `sudo rm users.json server-settings.json folder-shares.json` (if they exist)
 4.  `sudo rm -rf public/uploads/users/*` (deletes all user upload subdirectories)
 5.  `pm2 start imagedrop`
     *   The next user to sign up will become the admin. Default settings will be applied.
 
 Your ImageDrop application should now be running with your chosen web server!
-
-    
