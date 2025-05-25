@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Link2, Copy, Trash2 } from 'lucide-react';
+import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Link2, Copy, Trash2, Check } from 'lucide-react'; // Added Check
 import { useToast } from '@/hooks/use-toast';
 import {
   Select,
@@ -410,3 +410,4 @@ export default function MyImagesPage() {
     </div>
   );
 }
+
