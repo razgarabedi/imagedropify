@@ -1,13 +1,14 @@
+
 // src/components/page-content/home-page-client-content.tsx
 "use client";
 
-import React, { useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { useState, useCallback, useEffect, ReactNode, useMemo } from 'react';
 import Image from 'next/image';
 import { ImageUploader, type UploadedImageFile as ClientUploadedImageFile } from '@/components/image-uploader';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
-import { getUserImages, type UserImage, listUserFolders, type UserFolder } from '@/app/actions/imageActions';
+import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions'; // UserImageData for DB structure
 import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
@@ -25,13 +26,15 @@ import {
 } from "@/components/ui/select";
 import { Folder, Image as ImageIconLucide } from 'lucide-react';
 
+// This interface now matches UserImageData more closely
 interface DisplayImage {
-  id: string;
-  name: string;
-  previewSrc: string;
-  url: string;
-  uploaderId: string;
+  id: string; // Database ID (UUID)
+  name: string; // filename on disk
+  previewSrc: string; // Full public URL
+  url: string; // Full public URL
+  uploaderId: string; // userId
   folderName: string;
+  originalName: string; // Original filename from upload
 }
 
 const LATEST_IMAGES_COUNT = 8;
@@ -79,14 +82,16 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
     setIsLoadingInitialImages(true);
     try {
-      const userImagesFromServer = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
+      // Fetch images from the default folder for the "Latest Images" section
+      const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
-        id: img.id,
-        name: img.name,
-        previewSrc: img.url,
-        url: img.url,
+        id: img.id, // DB ID
+        name: img.name, // filename on disk
+        previewSrc: img.url, // full public URL
+        url: img.url, // full public URL
         uploaderId: img.userId,
         folderName: img.folderName,
+        originalName: img.originalName,
       }));
       setUploadedImages(displayImages);
     } catch (error) {
@@ -116,40 +121,37 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
   }, [needsImageFetch, authLoading, fetchLatestUserImages]);
 
-  const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    const newImage: DisplayImage = {
-      id: imageFile.id,
-      name: imageFile.name,
-      previewSrc: imageFile.url,
-      url: imageFile.url,
-      uploaderId: imageFile.userId,
-      folderName: imageFile.folderName,
-    };
-
-    if (newImage.folderName === DEFAULT_FOLDER_NAME) {
-        setUploadedImages((prevImages) => {
-            const updatedImages = [newImage, ...prevImages];
-            const uniqueImages = updatedImages.filter((img, index, self) =>
-                index === self.findIndex((t) => t.id === img.id)
-            );
-            return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
-        });
+  // Updated ClientUploadedImageFile to match UploadedImageServerData from imageActions
+  const handleImageUpload = useCallback((imageFile: {
+      id: string; name: string; url: string; originalName: string; userId: string; folderName: string; mimeType: string; size: number;
+  }) => {
+    // If the uploaded image was to the default folder, re-fetch to update the "Latest Images"
+    if (user && imageFile.folderName === DEFAULT_FOLDER_NAME) {
+        fetchLatestUserImages();
     }
-  }, []);
+    // No direct optimistic update here for simplicity, rely on re-fetch
+  }, [user, fetchLatestUserImages]);
 
-  const handleImageDelete = useCallback((deletedImageId: string) => {
-    setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-  }, []);
 
-  const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
+  const handleImageDelete = useCallback((deletedImageDbId: string) => {
+    setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
+    // Optionally re-fetch if you want to ensure the list count is accurate from server
+    if (user) fetchLatestUserImages();
+  }, [user, fetchLatestUserImages]);
+
+  const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
+    // newImageDbId is the same as oldImageDbId because DB ID doesn't change
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
-        image.id === oldImageId
-          ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
+        image.id === oldImageDbId
+          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl } // Update filename and URLs
           : image
       )
     );
-  }, []);
+    if (user) fetchLatestUserImages(); // Re-fetch to confirm
+  }, [user, fetchLatestUserImages]);
+
+  const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -220,8 +222,6 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
           </section>
         )}
         
-        {/* Fallback if serverImageContent is null (e.g. user is logged in, or error server-side)
-            and auth is still loading, show skeleton */}
         {!user && authLoading && (
              <section className="text-center py-16">
                 <Skeleton className="mx-auto rounded-lg mb-8 shadow-lg w-[300px] h-[200px]" />
@@ -242,7 +242,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             {isLoadingInitialImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={index} className="shadow-lg">
+                  <Card key={`skeleton-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -256,14 +256,15 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {uploadedImages.map((image) => (
+                {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id}
+                    key={image.id} // DB ID is unique
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
-                    name={image.name}
+                    name={image.name} // filename on disk
                     uploaderId={image.uploaderId}
+                    originalName={image.originalName}
                     onDelete={handleImageDelete}
                     onRename={handleImageRename}
                   />
@@ -279,12 +280,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             )}
           </section>
         )}
-         {authLoading && user && ( // Show skeleton for logged-in user section if auth still loading
+         {authLoading && user && ( 
             <section aria-labelledby="gallery-title">
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                    <Card key={index} className="shadow-lg">
+                    <Card key={`skeleton-loggedin-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                         <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                         <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                         <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -297,9 +298,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
       <footer className="py-8 text-center text-muted-foreground border-t">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
-         <p className="text-xs mt-1">Images are stored in user-specific folders under &apos;public/uploads/users/userId/folderName/YYYY/MM/DD/&apos;.</p>
-         <p className="text-xs mt-1">User data is stored in users.json (demo only, insecure).</p>
-         <p className="text-xs mt-1">Site settings are in server-settings.json.</p>
+         <p className="text-xs mt-1">Images stored in `public/uploads/users/userId/folderName/YYYY/MM/DD/`.</p>
+         <p className="text-xs mt-1">User data & image metadata now in PostgreSQL.</p>
       </footer>
     </div>
   );

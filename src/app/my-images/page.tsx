@@ -2,18 +2,18 @@
 // src/app/my-images/page.tsx
 "use client";
 
-import React, { useState, useCallback, useEffect, useActionState, startTransition } from 'react';
+import React, { useState, useCallback, useEffect, useActionState, startTransition, useMemo } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { 
     getUserImages, 
-    type UserImage, 
+    type UserImageData, // Using the new type for DB data
     createFolderAction, 
     listUserFolders,
     type UserFolder,
-    type FolderActionResponse as ImageFolderActionResponse // Aliased to avoid conflict
+    type FolderActionResponse as ImageFolderActionResponse 
 } from '@/app/actions/imageActions';
 import { 
     createShareLinkAction, 
@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Link2, Copy, Trash2, Check } from 'lucide-react'; // Added Check
+import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Link2, Copy, Trash2, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   Select,
@@ -41,14 +41,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-
+// This interface should align with UserImageData for consistency, or UserImageData can be used directly
 interface DisplayImage {
-  id: string; 
-  name: string;
-  previewSrc: string;
-  url: string;
-  uploaderId: string;
+  id: string; // Database ID (UUID)
+  name: string; // filename on disk
+  previewSrc: string; // Full public URL
+  url: string; // Full public URL
+  uploaderId: string; // userId
   folderName: string;
+  originalName: string; // Original filename from upload
 }
 
 const initialImageFolderActionState: ImageFolderActionResponse = { success: false };
@@ -117,17 +118,19 @@ export default function MyImagesPage() {
     }
     setIsLoadingImages(true);
     try {
-      const imagesFromServer = await getUserImages(user.id, undefined, currentFolder);
+      // getUserImages now returns UserImageData[] from DB
+      const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
-        id: img.id,
-        name: img.name,
-        previewSrc: img.url,
-        url: img.url,
+        id: img.id, // DB ID
+        name: img.name, // filename on disk
+        previewSrc: img.url, // full public URL
+        url: img.url, // full public URL
         uploaderId: img.userId,
         folderName: img.folderName,
+        originalName: img.originalName,
       }));
       setUserImages(displayImages);
-      fetchActiveShareLink(currentFolder); // Check for active share link when folder changes
+      fetchActiveShareLink(currentFolder);
     } catch (error) {
       console.error("Failed to fetch user images for folder:", currentFolder, error);
       setUserImages([]);
@@ -165,7 +168,6 @@ export default function MyImagesPage() {
     }
   }, [createFolderState, isCreateFolderPending, toast, fetchUserFolders]);
 
-  // Effect for creating share links
   useEffect(() => {
     if (!isCreateShareLinkPending) {
         if (createShareLinkState.success && createShareLinkState.shareUrl) {
@@ -177,7 +179,6 @@ export default function MyImagesPage() {
     }
   }, [createShareLinkState, isCreateShareLinkPending, toast]);
 
-  // Effect for revoking share links
   useEffect(() => {
     if (!isRevokeShareLinkPending) {
         if (revokeShareLinkState.success) {
@@ -233,19 +234,22 @@ export default function MyImagesPage() {
     }
   };
 
-  const handleImageDelete = useCallback((deletedImageId: string) => {
-    setUserImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
+  const handleImageDelete = useCallback((deletedImageDbId: string) => {
+    setUserImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
   }, []);
 
-  const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
+  const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
+    // newImageDbId is same as oldImageDbId
     setUserImages((prevImages) =>
       prevImages.map(image =>
-        image.id === oldImageId
-          ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
+        image.id === oldImageDbId
+          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl }
           : image
       )
     );
   }, []);
+  
+  const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
   if (authLoading || (!user && !authLoading) ) {
     return (
@@ -278,11 +282,9 @@ export default function MyImagesPage() {
           </h2>
         </div>
 
-        {/* Folder Management & Sharing UI */}
         <Card className="mb-8 shadow-md">
           <CardHeader>
             <CardContent className="flex flex-col sm:flex-row gap-4 items-start justify-between p-4">
-                {/* Left side: Folder selection and creation */}
                 <div className="flex flex-col gap-4 w-full sm:w-auto">
                     <div className="flex-grow w-full sm:w-auto">
                         <Label htmlFor="folder-select" className="mb-1 block text-sm font-medium">Select Folder</Label>
@@ -323,7 +325,6 @@ export default function MyImagesPage() {
                     </form>
                 </div>
 
-                {/* Right side: Sharing options for current folder */}
                 {currentFolder && currentFolder !== DEFAULT_FOLDER_NAME && (
                   <div className="mt-4 sm:mt-0 w-full sm:w-auto sm:max-w-md">
                     <h3 className="text-md font-semibold mb-2">Share Folder: &quot;{currentFolder}&quot;</h3>
@@ -372,7 +373,7 @@ export default function MyImagesPage() {
         {isLoadingImages ? (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {Array.from({ length: 10 }).map((_, index) => (
-              <Card key={index} className="shadow-lg">
+              <Card key={`skeleton-myimages-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                 <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                 <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                 <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -388,14 +389,15 @@ export default function MyImagesPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {userImages.map((image) => (
+             {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
               <ImagePreviewCard
-                key={image.id}
+                key={image.id} // DB ID
                 id={image.id}
                 src={image.previewSrc}
                 url={image.url}
-                name={image.name}
+                name={image.name} // filename on disk
                 uploaderId={image.uploaderId}
+                originalName={image.originalName}
                 onDelete={handleImageDelete}
                 onRename={handleImageRename}
               />
@@ -410,4 +412,3 @@ export default function MyImagesPage() {
     </div>
   );
 }
-

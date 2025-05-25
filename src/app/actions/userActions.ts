@@ -1,8 +1,10 @@
+
 // src/app/actions/userActions.ts
 'use server';
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import prisma from '@/lib/prisma'; // Ensure prisma is imported
 import { getCurrentUserAction } from '@/app/actions/authActions';
 import { 
     getAllUsersForAdmin, 
@@ -10,10 +12,11 @@ import {
     updateUserLimitsService,
     deleteUserAndRelatedDataService 
 } from '@/lib/auth/service';
-import type { User, UserStatus, UserLimits, UserRole } from '@/lib/auth/types';
+import type { User as AuthUser, UserStatus, UserLimits, UserRole } from '@/lib/auth/types'; // Renamed to avoid conflict with Prisma User
 import { countUserImages, calculateUserTotalStorage } from '@/app/actions/imageActions';
 
-export interface UserWithActivity extends User {
+// This interface now extends AuthUser
+export interface UserWithActivity extends AuthUser {
   imageCount: number;
   totalStorageUsedMB: number;
 }
@@ -27,7 +30,7 @@ export interface AdminUserListResponse {
 export interface AdminUserActionResponse {
   success: boolean;
   error?: string;
-  user?: User;
+  user?: AuthUser; // Use AuthUser
   userId?: string;
   message?: string;
 }
@@ -35,31 +38,32 @@ export interface AdminUserActionResponse {
 const updateUserLimitsSchema = z.object({
   userId: z.string().uuid("Invalid User ID"),
   maxImages: z.preprocess(
-    (val) => (val === '' || val === null || isNaN(Number(val))) ? null : Number(val),
+    (val) => (val === '' || val === null || val === undefined || isNaN(Number(val))) ? null : Number(val),
     z.number().int().min(0, "Cannot be negative").nullable().optional()
   ),
   maxSingleUploadSizeMB: z.preprocess(
-    (val) => (val === '' || val === null || isNaN(Number(val))) ? null : Number(val),
-    z.number().min(0.1, "Must be at least 0.1MB").max(100).nullable().optional()
+    (val) => (val === '' || val === null || val === undefined || isNaN(Number(val))) ? null : Number(val),
+    z.number().min(0.1, "Must be at least 0.1MB").max(100).nullable().optional() // Assuming 100MB is a hard cap
   ),
   maxTotalStorageMB: z.preprocess(
-    (val) => (val === '' || val === null || isNaN(Number(val))) ? null : Number(val),
+    (val) => (val === '' || val === null || val === undefined || isNaN(Number(val))) ? null : Number(val),
      z.number().min(1, "Must be at least 1MB").nullable().optional()
   ),
 });
 
 export async function getAllUsersWithActivityAction(): Promise<AdminUserListResponse> {
   const currentUser = await getCurrentUserAction();
-  if (!currentUser || currentUser.role !== 'Admin') { // Role check for 'Admin' (capitalized from Prisma enum)
+  if (!currentUser || currentUser.role !== 'Admin') {
     return { success: false, error: 'Unauthorized: Admin access required.' };
   }
 
   try {
-    const users = await getAllUsersForAdmin();
+    const users: AuthUser[] = await getAllUsersForAdmin(); // This returns AuthUser[]
     const usersWithActivity: UserWithActivity[] = await Promise.all(
       users.map(async (user) => {
+        // These image actions now query the DB
         const [imageCount, totalStorageUsedBytes] = await Promise.all([
-           countUserImages(user.id),
+           countUserImages(user.id, null), // Count all images for the user
            calculateUserTotalStorage(user.id)
         ]);
         const totalStorageUsedMB = parseFloat((totalStorageUsedBytes / (1024 * 1024)).toFixed(2));
@@ -79,16 +83,15 @@ export async function getAllUsersWithActivityAction(): Promise<AdminUserListResp
 
 async function updateUserStatusInternal(
   userId: string, 
-  newStatus: UserStatus, // UserStatus is now 'Pending' | 'Approved' | 'Rejected'
-  adminUser: User
+  newStatus: UserStatus, 
+  adminUser: AuthUser // Use AuthUser
 ): Promise<AdminUserActionResponse> {
-  // Check against capitalized status 'Approved'
   if (userId === adminUser.id && newStatus !== 'Approved') {
     return { success: false, error: `Cannot change your own admin account status to '${newStatus}'.` };
   }
 
   try {
-    const updatedUser = await updateUserStatusService(userId, newStatus); // newStatus is already capitalized
+    const updatedUser = await updateUserStatusService(userId, newStatus);
     if (!updatedUser) {
         return { success: false, error: `User with ID ${userId} not found.` };
     }
@@ -111,7 +114,7 @@ export async function approveUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
   
-  return updateUserStatusInternal(userId, 'Approved', adminUser); // Use capitalized 'Approved'
+  return updateUserStatusInternal(userId, 'Approved', adminUser);
 }
 
 export async function rejectUserAction(
@@ -125,7 +128,7 @@ export async function rejectUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
 
-  return updateUserStatusInternal(userId, 'Rejected', adminUser); // Use capitalized 'Rejected'
+  return updateUserStatusInternal(userId, 'Rejected', adminUser);
 }
 
 export async function unbanUserAction(
@@ -139,7 +142,7 @@ export async function unbanUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
 
-  return updateUserStatusInternal(userId, 'Pending', adminUser); // Use capitalized 'Pending'
+  return updateUserStatusInternal(userId, 'Pending', adminUser);
 }
 
 export async function deleteUserAction(
@@ -161,13 +164,16 @@ export async function deleteUserAction(
   }
 
   try {
+    // deleteUserAndRelatedDataService now handles deleting Prisma Image records via Cascade
+    // and then deletes files from filesystem.
     const deletionSuccess = await deleteUserAndRelatedDataService(userIdToDelete);
     if (!deletionSuccess) {
       return { success: false, error: `Failed to delete user ${userIdToDelete}. User may not exist or data deletion encountered issues.` };
     }
     revalidatePath('/admin/dashboard'); 
     return { success: true, userId: userIdToDelete, message: `User ${userIdToDelete} and their data have been deleted.` };
-  } catch (error: any) {
+  } catch (error: any)
+ {
     console.error(`Error deleting user ${userIdToDelete}:`, error);
     return { success: false, error: error.message || 'Failed to delete user.' };
   }
@@ -198,10 +204,14 @@ export async function updateUserLimitsAction(
 
   const { userId, ...limitsToUpdate } = validation.data;
 
+  // Ensure that undefined values are correctly passed as null or kept undefined
+  // based on whether they were provided in the form.
+  // Prisma handles `undefined` fields in an update as "do not change".
+  // It handles `null` as "set to null".
    const finalLimits: UserLimits = {
-      maxImages: limitsToUpdate.maxImages === undefined ? undefined : limitsToUpdate.maxImages,
-      maxSingleUploadSizeMB: limitsToUpdate.maxSingleUploadSizeMB === undefined ? undefined : limitsToUpdate.maxSingleUploadSizeMB,
-      maxTotalStorageMB: limitsToUpdate.maxTotalStorageMB === undefined ? undefined : limitsToUpdate.maxTotalStorageMB,
+      maxImages: limitsToUpdate.maxImages, // Will be number or null
+      maxSingleUploadSizeMB: limitsToUpdate.maxSingleUploadSizeMB, // Will be number or null
+      maxTotalStorageMB: limitsToUpdate.maxTotalStorageMB, // Will be number or null
    };
 
   try {

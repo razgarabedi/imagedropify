@@ -6,10 +6,12 @@ import fs from 'fs/promises';
 import path from 'path';
 import { stat } from 'fs/promises';
 import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers'; // Import cookies
+import { cookies } from 'next/headers';
+import prisma from '@/lib/prisma';
 import { getCurrentUserIdFromSession, findUserById } from '@/lib/auth/service';
 import { getMaxUploadSizeMB as getGlobalMaxUploadSizeMB } from '@/lib/settingsService';
 import type { User } from '@/lib/auth/types';
+import type { Image as PrismaImage } from '@prisma/client';
 import { 
     DEFAULT_FOLDER_NAME, 
     MAX_FILENAME_LENGTH,
@@ -35,20 +37,16 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
     console.error('Invalid User ID for directory creation:', userId);
     throw new Error('Invalid user ID format.');
   }
-  // Validate folderName: prevent path traversal, empty names, or excessively long names
   if (!folderName || folderName.includes('..') || folderName.includes('/') || folderName.length > 100) {
     console.error('Invalid folderName for directory creation:', folderName);
     throw new Error('Invalid folder name format or length.');
   }
 
   const datePath = getFormattedDatePath(); // "YYYY/MM/DD"
-  // Path structure: userId/folderName/YYYY/MM/DD
   const fullFolderPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName, datePath);
 
   const resolvedFullFolderPath = path.resolve(fullFolderPath);
-  // Base path for security check: uploads/users/userId/folderName
   const resolvedUserFolderBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName));
-
 
   if (!resolvedFullFolderPath.startsWith(resolvedUserFolderBase + path.sep) &&
       !resolvedFullFolderPath.startsWith(resolvedUserFolderBase + path.win32.sep) ||
@@ -58,7 +56,6 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   }
 
   try {
-    // Explicitly set mode 0o755 (rwxr-xr-x) for created directories.
     await fs.mkdir(fullFolderPath, { recursive: true, mode: 0o755 });
   } catch (error) {
     console.error('CRITICAL: Failed to create user-specific folder upload directory structure:', fullFolderPath, error);
@@ -67,19 +64,21 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   return fullFolderPath;
 }
 
-
+// This interface might be adjusted or replaced by PrismaImage type directly in some contexts
 export interface UploadedImageServerData {
-  id: string; // Now: userId/folderName/YYYY/MM/DD/filename.ext
-  name: string;
-  url: string; // Now: /uploads/users/userId/folderName/YYYY/MM/DD/filename.ext
+  id: string; // Database ID (UUID)
+  name: string; // filename on disk
+  url: string; // full public URL /uploads/users/...
   originalName: string;
   userId: string;
   folderName: string;
+  mimeType: string;
+  size: number;
 }
 
 export interface UploadImageActionState {
   success: boolean;
-  data?: UploadedImageServerData;
+  data?: UploadedImageServerData; // Or directly PrismaImage
   error?: string;
 }
 
@@ -90,7 +89,7 @@ export async function uploadImage(
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-      const cookieStore = await cookies(); // Await cookies() before using it
+      const cookieStore = await cookies();
       const tokenExists = cookieStore.has('session_token');
       if (!tokenExists) {
           return { success: false, error: 'Upload failed: Session token not found. Please log in.' };
@@ -99,11 +98,10 @@ export async function uploadImage(
       }
     }
 
-    const user = await findUserById(userId) as User | undefined;
+    const user = await findUserById(userId);
     if (!user) {
         return { success: false, error: 'User not found.' };
     }
-    // Check against capitalized status from Prisma enum
     if (user.status !== 'Approved') { 
        return { success: false, error: `Account status is '${user.status}'. Uploads require 'Approved' status.` };
     }
@@ -111,14 +109,12 @@ export async function uploadImage(
     const folderNameInput = formData.get('folderName') as string | null;
     const targetFolderName = (folderNameInput && folderNameInput.trim() !== "") ? folderNameInput.trim() : DEFAULT_FOLDER_NAME;
 
-    // Validate targetFolderName against potentially harmful characters or patterns
     if (targetFolderName.includes('..') || targetFolderName.includes('/') || targetFolderName.includes('\\')) {
         return { success: false, error: 'Invalid folder name specified for upload.' };
     }
 
-
     if (user.maxImages !== null && user.maxImages !== undefined) {
-        const currentImageCount = await countUserImages(userId, null); // Count across all folders
+        const currentImageCount = await countUserImages(userId, null); 
         if (currentImageCount >= user.maxImages) {
             return { success: false, error: `Upload limit reached (${user.maxImages} images). Please delete some images to upload more.` };
         }
@@ -127,7 +123,7 @@ export async function uploadImage(
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
     const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
     const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
-                                ? userMaxSingleUploadMB
+                                ? userMaxSingleUploadSizeMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -147,7 +143,7 @@ export async function uploadImage(
         }
     }
 
-    let currentActualUploadPath: string;
+    let currentActualUploadPath: string; // Full path to YYYY/MM/DD directory
     try {
       currentActualUploadPath = await ensureUploadDirsExist(userId, targetFolderName);
     } catch (error: any) {
@@ -169,28 +165,38 @@ export async function uploadImage(
                                    .replace(/[^a-zA-Z0-9_-]/g, '_')
                                    .substring(0, 50);
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-    const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH);
-    const filePath = path.join(currentActualUploadPath, filename);
+    const diskFilename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH);
+    const filePathOnDisk = path.join(currentActualUploadPath, diskFilename); // Full path to file on disk
     
-    const datePathForUrl = getFormattedDatePath(); 
+    const datePathForUrlDb = getFormattedDatePath(); // "YYYY/MM/DD" for DB and URL construction
+    const urlPathForDb = path.join(userId, targetFolderName, datePathForUrlDb, diskFilename).split(path.sep).join('/'); // Relative path for DB: userId/folderName/YYYY/MM/DD/filename.ext
 
-    const resolvedFilePath = path.resolve(filePath);
+    const resolvedFilePath = path.resolve(filePathOnDisk);
     if (!resolvedFilePath.startsWith(path.resolve(currentActualUploadPath) + path.sep) &&
         !resolvedFilePath.startsWith(path.resolve(currentActualUploadPath) + path.win32.sep) ){
-         console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePath}`);
+         console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePathOnDisk}`);
          throw new Error('File path is outside allowed directory.');
     }
 
     try {
-      await fs.writeFile(filePath, buffer, { mode: 0o644 });
+      await fs.writeFile(filePathOnDisk, buffer, { mode: 0o644 });
       
       if (POST_UPLOAD_DELAY_MS > 0) {
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
       }
       
-      const webDatePath = datePathForUrl.split(path.sep).join('/');
-      const imageUrl = `/uploads/users/${userId}/${targetFolderName}/${webDatePath}/${filename}`;
-      const imageId = `${userId}/${targetFolderName}/${webDatePath}/${filename}`;
+      // Save metadata to database
+      const imageRecord = await prisma.image.create({
+        data: {
+          filename: diskFilename,
+          originalName: file.name,
+          urlPath: urlPathForDb, // Store the relative path
+          mimeType: file.type,
+          size: file.size,
+          folderName: targetFolderName,
+          userId: userId,
+        }
+      });
 
       revalidatePath('/');
       revalidatePath('/my-images');
@@ -198,11 +204,22 @@ export async function uploadImage(
 
       return {
         success: true,
-        data: { id: imageId, name: filename, url: imageUrl, originalName: file.name, userId, folderName: targetFolderName },
+        data: { 
+            id: imageRecord.id, 
+            name: imageRecord.filename, 
+            url: `/uploads/users/${imageRecord.urlPath}`, 
+            originalName: imageRecord.originalName, 
+            userId: imageRecord.userId, 
+            folderName: imageRecord.folderName,
+            mimeType: imageRecord.mimeType,
+            size: imageRecord.size,
+        },
       };
     } catch (error: any) {
-      console.error('Failed to save file to disk:', filePath, error);
-      return { success: false, error: 'Failed to save file on server.' };
+      console.error('Failed to save file to disk or database:', filePathOnDisk, error);
+      // Attempt to clean up file if DB write fails? Or handle orphans later.
+      // For now, just report error.
+      return { success: false, error: 'Failed to save file or its metadata.' };
     }
   } catch (e: any) {
     console.error("Unexpected error in uploadImage action:", e);
@@ -210,154 +227,67 @@ export async function uploadImage(
   }
 }
 
-export interface UserImage {
-  id: string; // Format: userId/folderName/YYYY/MM/DD/filename.ext
-  name: string;
-  url: string;
-  ctime: number;
+// This type represents the data structure returned by getUserImages
+export interface UserImageData {
+  id: string; // Database ID (UUID)
+  name: string; // filename on disk
+  url: string; // Full public URL
+  uploadedAt: Date;
   size: number;
   userId: string;
   folderName: string;
+  originalName: string;
+  mimeType: string;
 }
 
-// Fetches images. If targetFolderName is null, it fetches for ALL folders of the user.
-// If targetFolderName is specified, it fetches only for that folder.
-export async function getUserImages(userIdFromSession?: string, limit?: number, targetFolderName?: string | null): Promise<UserImage[]> {
+// Fetches images for a user, optionally filtered by folderName.
+// If targetFolderName is null, it fetches for ALL folders of the user.
+export async function getUserImages(
+  userIdFromSession?: string, 
+  limit?: number, 
+  targetFolderName?: string | null
+): Promise<UserImageData[]> {
   const userId = userIdFromSession || await getCurrentUserIdFromSession();
   if (!userId) {
     console.log("getUserImages: No userId provided or found in session.");
     return [];
   }
 
-  const allImages: UserImage[] = [];
-  
-  let foldersToScan: string[] = [];
-  if (targetFolderName === null) { // Fetch from all folders
-    const userFolders = await listUserFolders(userId);
-    foldersToScan = userFolders.map(f => f.name);
-    if (!foldersToScan.includes(DEFAULT_FOLDER_NAME)) { // Ensure default folder is scanned if fetching all
-        foldersToScan.push(DEFAULT_FOLDER_NAME);
-    }
-  } else if (targetFolderName) { // Fetch from a specific folder
-    foldersToScan = [targetFolderName];
-  } else {
-    // If targetFolderName is undefined (or empty string, though UI should prevent that), default to DEFAULT_FOLDER_NAME
-    foldersToScan = [DEFAULT_FOLDER_NAME];
+  const whereClause: any = { userId };
+  if (targetFolderName !== undefined && targetFolderName !== null) {
+    whereClause.folderName = targetFolderName;
+  }
+  // If targetFolderName is null, we fetch all images for the user (no folder filter).
+  // If targetFolderName is undefined (e.g., default case from homepage), it defaults to DEFAULT_FOLDER_NAME
+  else if (targetFolderName === undefined) { 
+    whereClause.folderName = DEFAULT_FOLDER_NAME;
   }
 
 
-  for (const folderName of foldersToScan) {
-    const userFolderBaseDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName);
+  try {
+    const imagesFromDb = await prisma.image.findMany({
+      where: whereClause,
+      orderBy: {
+        uploadedAt: 'desc',
+      },
+      take: limit,
+    });
 
-    try {
-      const resolvedUserFolderBaseDir = path.resolve(userFolderBaseDir);
-      const resolvedUploadDirBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId)); // User's root
-
-      if (!resolvedUserFolderBaseDir.startsWith(resolvedUploadDirBase + path.sep) &&
-          !resolvedUserFolderBaseDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
-          resolvedUserFolderBaseDir === path.resolve(UPLOAD_DIR_BASE_PUBLIC) // Prevent scanning above users dir
-          ) {
-          console.error(`Security alert: Attempt to access images outside designated user folder area. Path: ${userFolderBaseDir}, UserID: ${userId}, Folder: ${folderName}`);
-          continue; // Skip this folder
-      }
-      await fs.access(resolvedUserFolderBaseDir);
-    } catch (error: any) {
-       if (error.code === 'ENOENT') {
-          // If the default folder doesn't exist yet (e.g. user hasn't uploaded anything to it),
-          // it's not an error, just means no images there.
-          if (folderName === DEFAULT_FOLDER_NAME && targetFolderName !== null) {
-            // console.log(`Default folder ${DEFAULT_FOLDER_NAME} for user ${userId} does not exist yet.`);
-          } else if (folderName !== DEFAULT_FOLDER_NAME) {
-            // console.log(`User-created folder ${folderName} for user ${userId} does not exist.`);
-          }
-          continue; // Folder doesn't exist, skip
-       }
-       console.error(`Error accessing user folder base directory ${userFolderBaseDir}:`, error);
-       continue; // Skip this folder on other errors
-    }
-
-    const yearDirRegex = /^\d{4}$/;
-    const monthDirRegex = /^\d{2}$/;
-    const dayDirRegex = /^\d{2}$/;
-
-    try {
-      const yearDirs = await fs.readdir(userFolderBaseDir, { withFileTypes: true });
-      for (const yearDirent of yearDirs) {
-        if (yearDirent.isDirectory() && yearDirRegex.test(yearDirent.name)) {
-          const yearPath = path.join(userFolderBaseDir, yearDirent.name);
-          const monthDirs = await fs.readdir(yearPath, { withFileTypes: true });
-          for (const monthDirent of monthDirs) {
-            if (monthDirent.isDirectory() && monthDirRegex.test(monthDirent.name)) {
-              const monthPath = path.join(yearPath, monthDirent.name);
-              const dayDirs = await fs.readdir(monthPath, { withFileTypes: true });
-              for (const dayDirent of dayDirs) {
-                if (dayDirent.isDirectory() && dayDirRegex.test(dayDirent.name)) {
-                  const dayPath = path.join(monthPath, dayDirent.name);
-                  const resolvedDayPath = path.resolve(dayPath);
-                   if (!resolvedDayPath.startsWith(path.resolve(userFolderBaseDir) + path.sep) &&
-                       !resolvedDayPath.startsWith(path.resolve(userFolderBaseDir) + path.win32.sep)
-                      ) {
-                      console.warn(`Skipping potentially incorrect path structure: ${dayPath}`);
-                      continue;
-                  }
-
-                  try {
-                    const filesInDayFolder = await fs.readdir(dayPath);
-                    const imageFileDetails = await Promise.all(
-                      filesInDayFolder.map(async (file) => {
-                        if (file.includes('..') || file.includes('/') || file.includes(path.win32.sep)) {
-                          console.warn(`Skipping potentially malicious file name: ${file}`);
-                          return null;
-                        }
-                        const filePath = path.join(dayPath, file);
-                        const resolvedFilePath = path.resolve(filePath);
-                         if (!resolvedFilePath.startsWith(resolvedDayPath + path.sep) &&
-                             !resolvedFilePath.startsWith(resolvedDayPath + path.win32.sep)) {
-                              console.warn(`Skipping potentially incorrect file path: ${filePath}`);
-                              return null;
-                         }
-                        try {
-                          const statsResult = await stat(filePath);
-                          const validExtensions = Object.values(MIME_TO_EXTENSION);
-                          if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
-                            const webDatePath = `${yearDirent.name}/${monthDirent.name}/${dayDirent.name}`;
-                            return {
-                              id: `${userId}/${folderName}/${webDatePath}/${file}`,
-                              name: file,
-                              url: `/uploads/users/${userId}/${folderName}/${webDatePath}/${file}`,
-                              ctime: statsResult.ctimeMs,
-                              size: statsResult.size,
-                              userId: userId,
-                              folderName: folderName,
-                            };
-                          }
-                        } catch (statError: any) {
-                           if (statError.code !== 'ENOENT') console.error(`Error getting stats for file ${filePath}:`, statError);
-                           return null;
-                        }
-                        return null;
-                      })
-                    );
-                    allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
-                  } catch (readDirError) {
-                       console.error(`Error reading directory ${dayPath}:`, readDirError);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`Failed to read/process image dirs for user ${userId}, folder ${folderName}:`, error);
-    }
-  } // End folder loop
-
-  allImages.sort((a, b) => b.ctime - a.ctime);
-  if (limit) { 
-      return allImages.slice(0, limit);
+    return imagesFromDb.map(img => ({
+      id: img.id,
+      name: img.filename,
+      url: `/uploads/users/${img.urlPath}`, // Construct full URL
+      uploadedAt: img.uploadedAt,
+      size: img.size,
+      userId: img.userId,
+      folderName: img.folderName,
+      originalName: img.originalName,
+      mimeType: img.mimeType,
+    }));
+  } catch (error) {
+    console.error(`Failed to fetch images for user ${userId} from database:`, error);
+    return [];
   }
-  return allImages;
 }
 
 
@@ -366,9 +296,20 @@ export async function calculateUserTotalStorage(userId: string): Promise<number>
     console.error('Invalid User ID for calculating storage:', userId);
     return 0;
   }
-  const allUserImages = await getUserImages(userId, undefined, null); // Get all images from all folders
-  const totalSize = allUserImages.reduce((acc, image) => acc + image.size, 0);
-  return totalSize;
+  try {
+    const result = await prisma.image.aggregate({
+      _sum: {
+        size: true,
+      },
+      where: {
+        userId: userId,
+      },
+    });
+    return result._sum.size || 0;
+  } catch (error) {
+    console.error(`Error calculating total storage for user ${userId}:`, error);
+    return 0;
+  }
 }
 
 export async function countUserImages(userId: string, targetFolderName?: string | null): Promise<number> {
@@ -376,22 +317,39 @@ export async function countUserImages(userId: string, targetFolderName?: string 
     console.error('Invalid User ID for counting images:', userId);
     return 0;
   }
-  const userImages = await getUserImages(userId, undefined, targetFolderName);
-  return userImages.length;
+  
+  const whereClause: any = { userId };
+  if (targetFolderName !== undefined && targetFolderName !== null) {
+    whereClause.folderName = targetFolderName;
+  }
+  // If targetFolderName is null, count all images for the user.
+  // If undefined, it implies count for default folder in some contexts, or all if not specified.
+  // For the purpose of user.maxImages limit, we should count ALL images if targetFolderName is null.
+  // If targetFolderName is undefined, it should likely count all for safety or be explicit.
+  // Let's assume if targetFolderName is null, we count all. If undefined, specific logic might depend on caller.
+  // The current usage in uploadImage passes null for "all folders" check.
+
+  try {
+    return await prisma.image.count({ where: whereClause });
+  } catch (error) {
+    console.error(`Error counting images for user ${userId}:`, error);
+    return 0;
+  }
 }
 
 export interface DeleteImageActionState {
     success: boolean;
     error?: string;
+    deletedImageId?: string; // Return the DB ID of the deleted image
 }
 
 export async function deleteImage(
   prevState: DeleteImageActionState,
-  imageId: string
+  imageDbId: string // Now expects the database UUID of the image
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-     const cookieStore = await cookies(); // Await cookies() before using it
+     const cookieStore = await cookies();
      const tokenExists = cookieStore.has('session_token');
      if (!tokenExists) {
          return { success: false, error: 'Delete failed: Session token not found. Please log in.' };
@@ -400,65 +358,62 @@ export async function deleteImage(
      }
   }
 
-  if (typeof imageId !== 'string' || imageId.includes('..')) {
-    console.error(`Security alert: Invalid imageId (contains '..'). User: ${requestingUserId}, ID: ${imageId}`);
-    return { success: false, error: 'Invalid image ID format (contains ..).' };
+  if (typeof imageDbId !== 'string' || !imageDbId) {
+    console.error(`Security alert: Invalid imageDbId. User: ${requestingUserId}, ID: ${imageDbId}`);
+    return { success: false, error: 'Invalid image ID format.' };
   }
-
-  const parts = imageId.split('/');
-  if (parts.length !== 6) { 
-    console.error(`Security alert: Invalid imageId structure. Expected 6 parts, got ${parts.length}. User: ${requestingUserId}, ID: ${imageId}`);
-    return { success: false, error: 'Invalid image ID format (structure).' };
-  }
-
-  const imageOwnerId = parts[0];
-  const folderName = parts[1];
-  const yearPart = parts[2];
-  const monthPart = parts[3];
-  const dayPart = parts[4];
-  const filename = parts[5];
-
-  if (requestingUserId !== imageOwnerId) {
-     console.error(`Security alert: User ${requestingUserId} attempted to delete image owned by ${imageOwnerId}. ID: ${imageId}`);
-     return { success: false, error: 'Unauthorized: You can only delete your own images.' };
-  }
-  if (!folderName || folderName.includes('/') || folderName.includes('\\') || folderName.includes('..')) {
-      console.error(`Security alert: Invalid folderName component in ID. User: ${requestingUserId}, Folder: ${folderName}`);
-      return { success: false, error: 'Invalid image ID format (folderName).' };
-  }
-  if (!/^\d{4}$/.test(yearPart) || !/^\d{2}$/.test(monthPart) || !/^\d{2}$/.test(dayPart)) {
-      console.error(`Security alert: Invalid date components in ID. User: ${requestingUserId}, ID: ${imageId}`);
-      return { success: false, error: 'Invalid image ID format (date parts).' };
-  }
-  if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
-      console.error(`Security alert: Invalid filename component in ID. User: ${requestingUserId}, Filename: ${filename}`);
-      return { success: false, error: 'Invalid image ID format (filename).' };
-  }
-
-  const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageOwnerId, folderName, yearPart, monthPart, dayPart, filename);
-  const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
-  const resolvedFullPath = path.resolve(fullServerPath);
-
-  if (!resolvedFullPath.startsWith(userFolderBaseDir + path.sep) &&
-      !resolvedFullPath.startsWith(userFolderBaseDir + path.win32.sep)) {
-      console.error(`Security alert: User ${requestingUserId} attempted to delete path outside their folder: ${fullServerPath}`);
-      return { success: false, error: 'Unauthorized attempt to delete file. Path is outside your allowed folder directory.' };
-  }
-
+  
   try {
-    await fs.access(fullServerPath);
-    await fs.unlink(fullServerPath);
+    const imageRecord = await prisma.image.findUnique({
+      where: { id: imageDbId },
+    });
+
+    if (!imageRecord) {
+      return { success: false, error: 'Image not found in database.' };
+    }
+
+    if (imageRecord.userId !== requestingUserId) {
+      console.error(`Security alert: User ${requestingUserId} attempted to delete image ${imageDbId} owned by ${imageRecord.userId}.`);
+      return { success: false, error: 'Unauthorized: You can only delete your own images.' };
+    }
+
+    const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageRecord.urlPath);
+    
+    // Security check: ensure constructed path is within UPLOAD_DIR_BASE_PUBLIC
+    const resolvedFullServerPath = path.resolve(fullServerPath);
+    const resolvedUploadBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
+    if (!resolvedFullServerPath.startsWith(resolvedUploadBase + path.sep)) {
+        console.error(`Security alert: Attempt to delete file outside base uploads directory. Path: ${fullServerPath}`);
+        return { success: false, error: 'Invalid file path for deletion.' };
+    }
+
+    // Delete from database first
+    await prisma.image.delete({
+      where: { id: imageDbId },
+    });
+
+    // Then delete from filesystem
+    try {
+      await fs.access(fullServerPath);
+      await fs.unlink(fullServerPath);
+    } catch (fsError: any) {
+      if (fsError.code === 'ENOENT') {
+        console.warn(`File ${fullServerPath} not found on disk for image ID ${imageDbId}, but DB record deleted.`);
+        // Proceed as success since DB record is gone
+      } else {
+        console.error(`Failed to delete file ${fullServerPath} from disk for image ID ${imageDbId}:`, fsError);
+        // DB record deleted, but file remains. Log this, but still report overall "success" from user's perspective
+        // as the image is no longer listed. A cleanup job might be needed for orphaned files.
+      }
+    }
 
     revalidatePath('/');
     revalidatePath('/my-images');
     revalidatePath('/admin/dashboard');
-    return { success: true };
+    return { success: true, deletedImageId: imageDbId };
   } catch (error: any) {
-    if (error.code === 'ENOENT') {
-      return { success: false, error: 'File not found. It may have already been deleted.' };
-    }
-    console.error(`Failed to delete file ${fullServerPath}:`, error);
-    return { success: false, error: 'Failed to delete file from server. Please try again.' };
+    console.error(`Failed to delete image (ID: ${imageDbId}):`, error);
+    return { success: false, error: 'Failed to delete image from server. Please try again.' };
   }
 }
 
@@ -466,9 +421,10 @@ export interface RenameImageActionState {
   success: boolean;
   error?: string;
   data?: {
-    newId: string; 
-    newName: string; 
-    newUrl: string; 
+    newId: string; // Database ID (remains the same)
+    newName: string; // New filename on disk
+    newUrl: string; // New full public URL
+    newOriginalName?: string; // Original name (doesn't change on rename typically)
   };
 }
 
@@ -478,7 +434,7 @@ export async function renameImage(
 ): Promise<RenameImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    const cookieStore = await cookies(); // Await cookies() before using it
+    const cookieStore = await cookies();
     const tokenExists = cookieStore.has('session_token');
     if (!tokenExists) {
         return { success: false, error: 'Rename failed: Session token not found. Please log in.' };
@@ -487,10 +443,10 @@ export async function renameImage(
     }
   }
 
-  const currentImageId = formData.get('currentImageId') as string | null; 
+  const currentImageDbId = formData.get('currentImageId') as string | null; 
   const newNameWithoutExtension = formData.get('newNameWithoutExtension') as string | null;
 
-  if (!currentImageId || !newNameWithoutExtension) {
+  if (!currentImageDbId || !newNameWithoutExtension) {
     return { success: false, error: 'Missing current image ID or new name.' };
   }
 
@@ -498,97 +454,98 @@ export async function renameImage(
   if (!sanitizedNewName) {
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
-
-  if (typeof currentImageId !== 'string' || currentImageId.includes('..')) {
-    return { success: false, error: 'Invalid current image ID format (contains ..).' };
-  }
-  const parts = currentImageId.split('/');
-   if (parts.length !== 6) { 
-    return { success: false, error: 'Invalid current image ID format (structure).' };
-  }
-  const imageOwnerId = parts[0];
-  const folderName = parts[1];
-  const yearPart = parts[2];
-  const monthPart = parts[3];
-  const dayPart = parts[4];
-  const oldFilenameWithExt = parts[5];
-
-  if (requestingUserId !== imageOwnerId) {
-    return { success: false, error: 'Unauthorized: You can only rename your own images.' };
-  }
-  if (!folderName || folderName.includes('/') || folderName.includes('\\') || folderName.includes('..')) {
-      return { success: false, error: 'Invalid image ID format (folderName).' };
-  }
-  if (!/^\d{4}$/.test(yearPart) || !/^\d{2}$/.test(monthPart) || !/^\d{2}$/.test(dayPart)) {
-      return { success: false, error: 'Invalid current image ID format (date parts).' };
-  }
-  if (!oldFilenameWithExt || oldFilenameWithExt.includes('/') || oldFilenameWithExt.includes('\\') || oldFilenameWithExt.includes('..')) {
-      return { success: false, error: 'Invalid current image ID format (filename).' };
-  }
-
-  const extension = path.extname(oldFilenameWithExt);
-  if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
-    return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
-  }
-
-  const oldPrefixMatch = oldFilenameWithExt.match(/^(\d{13}-\d{1,10})-/);
-  const oldPrefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-
-  let newFilenameWithExt = `${oldPrefix}-${sanitizedNewName}${extension}`;
-  newFilenameWithExt = newFilenameWithExt.substring(0, MAX_FILENAME_LENGTH);
-
-
-  if (newFilenameWithExt === oldFilenameWithExt) {
-    return { success: false, error: 'New name is the same as the old name.' };
-  }
-
-  const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
-  const dateSubPath = path.join(yearPart, monthPart, dayPart);
-
-  const oldFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName, dateSubPath, oldFilenameWithExt);
-  const newFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName, dateSubPath, newFilenameWithExt);
-
-  const resolvedOldPath = path.resolve(oldFullPath);
-  const resolvedNewPath = path.resolve(newFullPath);
-
-  const dateLevelBasePath = path.resolve(path.join(userFolderBaseDir, dateSubPath));
-
-  const isOldPathSafe = resolvedOldPath.startsWith(dateLevelBasePath + path.sep) || resolvedOldPath.startsWith(dateLevelBasePath + path.win32.sep);
-  const isNewPathSafe = resolvedNewPath.startsWith(dateLevelBasePath + path.sep) || resolvedNewPath.startsWith(dateLevelBasePath + path.win32.sep);
   
-  if (!isOldPathSafe || !isNewPathSafe) {
-    console.error(`Security alert: Path outside designated folder/date directory. User: ${requestingUserId}, Old: ${oldFullPath}, New: ${newFullPath}`);
-    return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
-  }
-
-
   try {
-    await fs.access(oldFullPath); 
-    try {
-      await fs.access(newFullPath);
-      return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this location.` };
-    } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e;
+    const imageRecord = await prisma.image.findUnique({
+      where: { id: currentImageDbId },
+    });
+
+    if (!imageRecord) {
+      return { success: false, error: 'Image not found in database.' };
     }
 
-    await fs.rename(oldFullPath, newFullPath);
+    if (imageRecord.userId !== requestingUserId) {
+      console.error(`Security alert: User ${requestingUserId} attempted to rename image ${currentImageDbId} owned by ${imageRecord.userId}.`);
+      return { success: false, error: 'Unauthorized: You can only rename your own images.' };
+    }
+
+    const oldDiskFilename = imageRecord.filename;
+    const extension = path.extname(oldDiskFilename);
+    if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
+      return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
+    }
+
+    const oldPrefixMatch = oldDiskFilename.match(/^(\d{13}-\d{1,10})-/);
+    const prefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
     
-    if (POST_UPLOAD_DELAY_MS > 0) { // Also add delay after rename
+    let newDiskFilename = `${prefix}-${sanitizedNewName}${extension}`;
+    newDiskFilename = newDiskFilename.substring(0, MAX_FILENAME_LENGTH);
+
+    if (newDiskFilename === oldDiskFilename) {
+      return { success: false, error: 'New name is the same as the old name.' };
+    }
+
+    // Extract path components from imageRecord.urlPath (userId/folderName/YYYY/MM/DD/oldDiskFilename)
+    const pathParts = imageRecord.urlPath.split('/');
+    if (pathParts.length < 5) { // userId, folderName, YYYY, MM, DD, filename
+        return { success: false, error: 'Invalid image URL path structure in database.' };
+    }
+    const relativeDirOnly = pathParts.slice(0, -1).join(path.sep); // userId/folderName/YYYY/MM/DD as local path parts
+
+    const oldFullPathOnDisk = path.join(UPLOAD_DIR_BASE_PUBLIC, relativeDirOnly, oldDiskFilename);
+    const newFullPathOnDisk = path.join(UPLOAD_DIR_BASE_PUBLIC, relativeDirOnly, newDiskFilename);
+
+    // Security check for paths
+    const resolvedUserBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
+    const resolvedOldPath = path.resolve(oldFullPathOnDisk);
+    const resolvedNewPath = path.resolve(newFullPathOnDisk);
+
+    if (!resolvedOldPath.startsWith(resolvedUserBase + path.sep) || !resolvedNewPath.startsWith(resolvedUserBase + path.sep)) {
+        console.error(`Security alert: Path outside designated user directory during rename. User: ${requestingUserId}`);
+        return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
+    }
+    
+    await fs.access(oldFullPathOnDisk); 
+    try {
+      await fs.access(newFullPathOnDisk);
+      return { success: false, error: `A file named "${newDiskFilename}" already exists in this location.` };
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') throw e; // Re-throw if it's not a "file not found" error
+    }
+
+    await fs.rename(oldFullPathOnDisk, newFullPathOnDisk);
+    
+    if (POST_UPLOAD_DELAY_MS > 0) {
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
     }
 
-    const webDatePath = `${yearPart}/${monthPart}/${dayPart}`;
-    const newUrl = `/uploads/users/${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
-    const newId = `${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
+    const newUrlPathForDb = path.join(relativeDirOnly, newDiskFilename).split(path.sep).join('/');
+
+    const updatedImageRecord = await prisma.image.update({
+        where: { id: currentImageDbId },
+        data: {
+            filename: newDiskFilename,
+            urlPath: newUrlPathForDb,
+            // originalName typically doesn't change on rename, but you could add UI for it
+        }
+    });
 
     revalidatePath('/');
     revalidatePath('/my-images');
     revalidatePath('/admin/dashboard');
 
-    return { success: true, data: { newId, newName: newFilenameWithExt, newUrl } };
+    return { 
+        success: true, 
+        data: { 
+            newId: updatedImageRecord.id, // DB ID remains the same
+            newName: updatedImageRecord.filename, 
+            newUrl: `/uploads/users/${updatedImageRecord.urlPath}`,
+            // newOriginalName: updatedImageRecord.originalName // if you decide to allow changing it
+        } 
+    };
   } catch (error: any) {
     if (error.code === 'ENOENT') return { success: false, error: 'Original file not found.' };
-    console.error(`Failed to rename file from ${oldFullPath} to ${newFullPath}:`, error);
+    console.error(`Failed to rename image ID ${currentImageDbId}:`, error);
     return { success: false, error: 'Failed to rename file on server.' };
   }
 }
@@ -610,7 +567,7 @@ export async function createFolderAction(
 ): Promise<FolderActionResponse> {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-        const cookieStore = await cookies(); // Await cookies() before using it
+        const cookieStore = await cookies();
         const tokenExists = cookieStore.has('session_token');
         if (!tokenExists) {
             return { success: false, error: 'Folder creation failed: Session token not found. Please log in.' };
@@ -653,10 +610,11 @@ export async function createFolderAction(
         }
     }
 
-
     try {
         await fs.mkdir(folderPath, { recursive: false, mode: 0o755 }); 
         revalidatePath('/my-images');
+        // No DB operation needed for folder creation itself, as folders are just directories
+        // However, we list them by scanning the filesystem.
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
         if (error.code === 'EEXIST') {
@@ -692,15 +650,16 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         
     } catch (error: any) {
         if (error.code === 'ENOENT') { 
+          // If user's base directory doesn't exist, that's fine, means no folders yet.
         } else {
             console.error(`Error listing folders for user ${userId}:`, error);
         }
     }
 
+    // Ensure default folder is always listed if it doesn't physically exist yet (or if no folders exist)
     if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
        folders.unshift({ name: DEFAULT_FOLDER_NAME });
     }
-
 
     return folders.sort((a,b) => {
         if (a.name === DEFAULT_FOLDER_NAME) return -1; 
@@ -708,5 +667,3 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         return a.name.localeCompare(b.name);
     });
 }
-
-

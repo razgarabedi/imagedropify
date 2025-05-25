@@ -1,37 +1,48 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-generator client {
-  provider = "prisma-client-js"
-}
-
+// prisma/schema.prisma
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+generator client {
+  provider = "prisma-client-js"
+}
+
 model User {
   id                      String        @id @default(uuid())
   email                   String        @unique
-  // IMPORTANT: Password should be hashed before storing.
-  // This schema defines it as a string, but application logic MUST handle hashing.
   password                String
   role                    UserRole      @default(User)
   status                  UserStatus    @default(Pending)
   maxImages               Int?
-  maxSingleUploadSizeMB Float?
-  maxTotalStorageMB     Float?
+  maxSingleUploadSizeMB   Float?
+  maxTotalStorageMB       Float?
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
   folderShares            FolderShare[]
+  images                  Image[] // Relation to Image model
+}
 
-  @@index([email])
+model Image {
+  id             String   @id @default(uuid())
+  filename       String // Actual filename on disk, e.g., uniqueId-sanitizedName.ext
+  originalName   String // Original name from user's computer
+  urlPath        String // Path relative to UPLOAD_DIR_BASE_PUBLIC, e.g., userId/folderName/YYYY/MM/DD/filename.ext
+  mimeType       String
+  size           Int // File size in bytes
+  folderName     String
+  uploadedAt     DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, folderName, uploadedAt])
 }
 
 model SiteSetting {
-  id                    Int      @id @default(1) @unique // Ensures only one row for global settings
+  id                    Int      @id @default(1)
   maxUploadSizeMB       Int      @default(6)
-  homepageImageUrl    String?
+  homepageImageUrl      String?
   registrationsEnabled  Boolean  @default(true)
   updatedAt             DateTime @updatedAt
 }
@@ -43,7 +54,8 @@ model FolderShare {
   folderName String
   createdAt  DateTime @default(now())
 
-  @@index([userId, folderName])
+  @@unique([userId, folderName]) // A user can only share a specific folder once
+  @@index([userId])
 }
 
 enum UserRole {

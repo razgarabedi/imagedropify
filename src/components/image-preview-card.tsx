@@ -36,19 +36,20 @@ import {
 import { Label } from '@/components/ui/label';
 
 interface ImagePreviewCardProps {
-  id: string; // Server ID, now format: `userId/folderName/YYYY/MM/DD/filename.ext`
-  src: string; 
-  url: string; // Relative server URL e.g., /uploads/users/userId/folderName/YYYY/MM/DD/filename.jpg
-  name: string; // filename.ext (original or current name)
-  uploaderId: string; 
-  onDelete?: (imageId: string) => void;
-  onRename?: (oldImageId: string, newImageId: string, newName: string, newUrl: string) => void;
+  id: string; // Database ID (UUID)
+  src: string; // Full public URL for display
+  url: string; // Full public URL for display/copy (same as src for this component)
+  name: string; // filename on disk (e.g., uniqueId-sanitizedName.ext)
+  uploaderId: string; // userId from the image record
+  originalName: string; // Original filename from upload
+  onDelete?: (imageDbId: string) => void;
+  onRename?: (oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => void;
 }
 
 const initialDeleteState: DeleteImageActionState = { success: false };
 const initialRenameState: RenameImageActionState = { success: false };
 
-export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onRename }: ImagePreviewCardProps) {
+export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName, onDelete, onRename }: ImagePreviewCardProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [isCopied, setIsCopied] = useState(false);
@@ -56,46 +57,44 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
   const [fullUrl, setFullUrl] = useState('');
   
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  const [newNameInput, setNewNameInput] = useState('');
-
-  // id format: "userId/folderName/YYYY/MM/DD/filename.ext"
-  const currentNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
+  // Initialize newNameInput with the current name without extension from the 'name' prop (which is filename on disk)
+  const [newNameInput, setNewNameInput] = useState(name.substring(0, name.lastIndexOf('.')));
 
   useEffect(() => {
-    setNewNameInput(currentNameWithoutExtension);
-  }, [name, currentNameWithoutExtension]);
+    // Update newNameInput if the 'name' prop changes (e.g., after a successful rename)
+    setNewNameInput(name.substring(0, name.lastIndexOf('.')));
+  }, [name]);
 
   const [deleteActionState, deleteFormAction, isDeletePending] = useActionState(deleteImage, initialDeleteState);
   const [renameActionState, renameFormAction, isRenamePending] = useActionState(renameImage, initialRenameState);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsVisible(true), 50);
-    if (typeof window !== 'undefined') {
-      setFullUrl(`${window.location.origin}${url}`);
-    } else {
-      setFullUrl(url); 
-    }
+    // The 'url' prop is already the full public URL
+    setFullUrl(url); 
     return () => clearTimeout(timer);
   }, [url]);
 
   useEffect(() => {
-    if (!isDeletePending && deleteActionState.success) {
-        toast({ title: 'Image Deleted', description: `${name} has been successfully deleted.` });
-        if (onDelete) onDelete(id); 
+    if (!isDeletePending && deleteActionState.success && deleteActionState.deletedImageId) {
+        toast({ title: 'Image Deleted', description: `${originalName} has been successfully deleted.` });
+        if (onDelete) onDelete(deleteActionState.deletedImageId); 
     } else if (!isDeletePending && deleteActionState.error) {
         toast({ variant: 'destructive', title: 'Delete Failed', description: deleteActionState.error });
     }
-  }, [deleteActionState, isDeletePending, toast, name, id, onDelete]);
+  }, [deleteActionState, isDeletePending, toast, originalName, onDelete]);
 
   useEffect(() => {
     if (!isRenamePending && renameActionState.success && renameActionState.data) {
       toast({ title: 'Image Renamed', description: `Renamed to "${renameActionState.data.newName}".` });
+      // id (db id) doesn't change, newName is new filename, newUrl is new full URL
       if (onRename) onRename(id, renameActionState.data.newId, renameActionState.data.newName, renameActionState.data.newUrl);
       setIsRenameDialogOpen(false); 
     } else if (!isRenamePending && renameActionState.error) {
       toast({ variant: 'destructive', title: 'Rename Failed', description: renameActionState.error });
     }
   }, [renameActionState, isRenamePending, toast, id, onRename, name]);
+
 
   const handleCopyUrl = async () => {
     if (!fullUrl) { toast({ variant: 'destructive', title: 'Error', description: 'Full URL not available.' }); return; }
@@ -110,9 +109,9 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
   };
 
   const handleDelete = () => {
-    // deleteImage action now directly takes the imageId (which is already correctly formatted)
+    // deleteImage action now takes the database ID directly
     startTransition(() => {
-        deleteFormAction(id); // Pass the id directly
+        deleteFormAction(id); 
     });
   };
 
@@ -122,7 +121,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
         return;
     }
     const formData = new FormData();
-    formData.append('currentImageId', id); // id is "userId/folderName/YYYY/MM/DD/oldFilename.ext"
+    formData.append('currentImageId', id); // Pass the database ID
     formData.append('newNameWithoutExtension', newNameInput.trim());
     startTransition(() => {
         renameFormAction(formData);
@@ -142,7 +141,12 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
         <CardTitle className="text-base font-semibold truncate mr-2" title={name}>{name}</CardTitle>
         {canModify && (
           <div className="flex items-center space-x-1">
-            <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+            <Dialog open={isRenameDialogOpen} onOpenChange={(open) => {
+              setIsRenameDialogOpen(open);
+              if (open) { // Reset input when dialog opens
+                setNewNameInput(name.substring(0, name.lastIndexOf('.')));
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" disabled={isRenamePending || isDeletePending}>
                   <FilePenLine className="h-4 w-4" />
@@ -151,7 +155,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Rename Image</DialogTitle>
-                  <DialogDescription>Enter new name for &quot;{name}&quot;. Extension preserved.</DialogDescription>
+                  <DialogDescription>Enter new name for &quot;{originalName}&quot;. Extension will be preserved.</DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
@@ -159,9 +163,10 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
                     <Input id="newName" value={newNameInput} onChange={(e) => setNewNameInput(e.target.value)} className="col-span-3" placeholder="Enter new name" disabled={isRenamePending} />
                   </div>
                 </div>
+                 {renameActionState.error && !isRenamePending && <p className="text-sm text-destructive px-6 -mt-2">{renameActionState.error}</p>}
                 <DialogFooter>
                   <DialogClose asChild><Button variant="outline" disabled={isRenamePending}>Cancel</Button></DialogClose>
-                  <Button onClick={handleRenameSubmit} disabled={isRenamePending}>
+                  <Button onClick={handleRenameSubmit} disabled={isRenamePending || !newNameInput.trim()}>
                     {isRenamePending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     {isRenamePending ? 'Renaming...' : 'Save Name'}
                   </Button>
@@ -178,7 +183,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                  <AlertDialogDescription>Permanently delete &quot;{name}&quot;?</AlertDialogDescription>
+                  <AlertDialogDescription>Permanently delete &quot;{originalName}&quot;?</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel disabled={isDeletePending}>Cancel</AlertDialogCancel>
@@ -194,7 +199,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
       </CardHeader>
       <CardContent className="p-0 aspect-[4/3] relative overflow-hidden group">
         <Image
-          src={src} alt={`Preview of ${name}`} fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          src={src} alt={`Preview of ${originalName}`} fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
           style={{objectFit: "cover"}} className="transition-transform duration-300 group-hover:scale-105"
           data-ai-hint="uploaded image" priority={false} 
         />
@@ -206,7 +211,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
             {isCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">Relative path: {url}</p>
+        <p className="text-xs text-muted-foreground">Original name: {originalName}</p>
       </CardFooter>
     </Card>
   );

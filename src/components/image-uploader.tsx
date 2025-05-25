@@ -14,30 +14,21 @@ import { uploadImage, type UploadImageActionState, type UploadedImageServerData 
 import { useAuth } from '@/hooks/use-auth'; 
 import Link from 'next/link';
 
+// MAX_FILE_SIZE is now effectively controlled by server actions based on user/global settings
+// const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']; // Already in imageConfig
 
-const MAX_FILE_SIZE = 6 * 1024 * 1024; 
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-
-export interface UploadedImageFile {
-  name: string; 
-  previewSrc: string; 
-  url: string; 
-  userId: string; 
-  folderName: string; // Added folderName
-}
-
+// The onImageUpload callback should now expect data matching UploadedImageServerData
 interface ImageUploaderProps {
-  onImageUpload: (imageFile: UploadedImageFile) => void;
-  currentFolderName?: string | null; // To specify which folder to upload to
+  onImageUpload: (imageData: UploadedImageServerData) => void;
+  currentFolderName?: string | null;
 }
 
 const initialUploadState: UploadImageActionState = { success: false };
 
-
 export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploaderProps) {
   const { user, loading: authLoading } = useAuth(); 
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0); // Not currently used for actual progress display
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [localPreviewSrc, setLocalPreviewSrc] = useState<string | null>(null);
   const [localFileName, setLocalFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,13 +51,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
         title: 'Image Uploaded!',
         description: `${actionState.data.originalName} to folder "${actionState.data.folderName}".`,
       });
-      onImageUpload({ // Pass full data including folderName
-        name: actionState.data.originalName,
-        previewSrc: localPreviewSrc || actionState.data.url, 
-        url: actionState.data.url,
-        userId: actionState.data.userId,
-        folderName: actionState.data.folderName, 
-      });
+      onImageUpload(actionState.data); // Pass the full data object
       resetUploaderVisualState();
     } else if (!isPending && actionState.error) {
       toast({
@@ -76,7 +61,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       });
       setUploadProgress(0); 
     }
-  }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState, localPreviewSrc]);
+  }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState]);
 
 
   const handleFileSelected = useCallback((file: File | null) => {
@@ -88,29 +73,22 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       resetUploaderVisualState();
       return;
     }
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      toast({ variant: 'destructive', title: 'Invalid File Type', description: `Accepted: JPG, PNG, GIF, WebP. You tried: ${file.type}` });
-      resetUploaderVisualState();
-      return;
-    }
-    // Note: MAX_FILE_SIZE check is now primarily handled by the server action for effective limit enforcement based on user/global settings.
-    // Client-side check can be a pre-emptive measure but server is source of truth.
-    // if (file.size > MAX_FILE_SIZE) { // MAX_FILE_SIZE here is just a client-side preliminary check
-    //   toast({ variant: 'destructive', title: 'File Too Large (Client Check)', description: `File size should ideally be under 6MB.` });
-    //   // resetUploaderVisualState(); // Commenting out to let server handle final size check
-    //   // return;
+    // Accepted types check already in server action, can be kept here as a pre-check
+    // if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    //   toast({ variant: 'destructive', title: 'Invalid File Type', description: `Accepted: JPG, PNG, GIF, WebP. You tried: ${file.type}` });
+    //   resetUploaderVisualState();
+    //   return;
     // }
 
-
     setLocalFileName(file.name);
-    setUploadProgress(0);
+    setUploadProgress(0); // Simulating progress start, actual progress not implemented
 
     const reader = new FileReader();
     reader.onloadend = () => {
       setLocalPreviewSrc(reader.result as string);
       const formData = new FormData();
       formData.append('image', file);
-      if (currentFolderName) { // Add folderName to formData if provided
+      if (currentFolderName) {
         formData.append('folderName', currentFolderName);
       }
       startTransition(() => {
@@ -155,6 +133,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
     if (isPending || !user || authLoading) return;
     fileInputRef.current?.click();
   };
+  
   useEffect(() => {
     const currentPreview = localPreviewSrc;
     return () => { if (currentPreview && currentPreview.startsWith('blob:')) URL.revokeObjectURL(currentPreview); };
@@ -196,7 +175,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
           role="button" aria-label="Image upload area" tabIndex={isPending ? -1 : 0}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if(!isPending) triggerFileInput(); }}}
         >
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} accept={ACCEPTED_IMAGE_TYPES.join(',')} className="hidden" disabled={isPending} name="image" />
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" disabled={isPending} name="image" /> {/* Removed accept prop, server validates */}
           {isPending ? (
             <div className="flex flex-col items-center text-center w-full">
               <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />

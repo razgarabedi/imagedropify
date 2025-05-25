@@ -2,13 +2,14 @@
 // src/app/share/[shareId]/page.tsx
 
 import { getSharedFolderInfoAction, type ShareActionResponse } from '@/app/actions/shareActions';
-import { getUserImages, type UserImage } from '@/app/actions/imageActions';
+import { getUserImages, type UserImageData } from '@/app/actions/imageActions'; // Using UserImageData
 import Image from 'next/image';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertTriangle, GalleryVerticalEnd } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { format } from 'date-fns'; // For formatting dates
 
 interface SharedPageProps {
   params: {
@@ -37,7 +38,8 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
   }
 
   const { userId, folderName } = shareInfoResponse.folderInfo;
-  const images: UserImage[] = await getUserImages(userId, undefined, folderName);
+  // getUserImages now returns UserImageData[]
+  const images: UserImageData[] = await getUserImages(userId, undefined, folderName);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -70,25 +72,25 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {images.map((image) => (
-              <Card key={image.id} className="shadow-lg overflow-hidden">
+              <Card key={image.id} className="shadow-lg overflow-hidden group">
                 <CardHeader className="p-0">
                   <div className="aspect-[4/3] relative w-full">
                     <Image
-                      src={image.url}
-                      alt={`Image: ${image.name}`}
+                      src={image.url} // Full public URL from UserImageData
+                      alt={`Image: ${image.originalName}`} // Use originalName for alt text
                       fill
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
                       style={{ objectFit: "cover" }}
-                      className="transition-transform duration-300 hover:scale-105"
+                      className="transition-transform duration-300 group-hover:scale-105"
                       data-ai-hint="shared image"
                     />
                   </div>
                 </CardHeader>
                 <CardContent className="p-3">
-                  <CardTitle className="text-sm font-medium truncate" title={image.name}>
-                    {image.name}
+                  <CardTitle className="text-sm font-medium truncate" title={image.originalName}>
+                    {image.originalName}
                   </CardTitle>
-                  {/* Link to direct image URL for easy saving/viewing */}
+                   <p className="text-xs text-muted-foreground">Uploaded: {format(new Date(image.uploadedAt), "MMM d, yyyy")}</p>
                    <a 
                     href={image.url} 
                     target="_blank" 
