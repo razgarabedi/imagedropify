@@ -1,3 +1,4 @@
+
 // src/app/my-images/page.tsx
 "use client";
 
@@ -17,7 +18,7 @@ import { Separator } from '@/components/ui/separator';
 import { GalleryVerticalEnd, Loader2 } from 'lucide-react';
 
 interface DisplayImage {
-  id: string;
+  id: string; // Format: userId/YYYY/MM/DD/filename.ext
   name: string;
   previewSrc: string;
   url: string;
@@ -39,9 +40,10 @@ export default function MyImagesPage() {
 
     setIsLoadingImages(true);
     try {
-      const imagesFromServer = await getUserImages(); // Fetches all images
+      // Fetches all images for the current session user (no limit)
+      const imagesFromServer = await getUserImages(); 
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
-        id: img.id,
+        id: img.id, // id is now userId/YYYY/MM/DD/filename.ext
         name: img.name,
         previewSrc: img.url,
         url: img.url,
@@ -59,7 +61,7 @@ export default function MyImagesPage() {
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login?message=Please login to view your images.');
-    } else if (user && !authLoading) { // Ensure user is loaded and not loading before fetching
+    } else if (user && !authLoading) { 
       fetchAllUserImages();
     }
   }, [user, authLoading, router, fetchAllUserImages]);
@@ -74,17 +76,13 @@ export default function MyImagesPage() {
         image.id === oldImageId
           ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
           : image
-      ).sort((a, b) => { // Assuming images are sorted by ctime (fetched that way)
-          // If renaming changes ID, this sort might be tricky if ID was used for original sort.
-          // However, getUserImages sorts by ctime from server, so client sort might not be strictly needed
-          // unless local adds/deletes disrupt a ctime-based sort.
-          // For now, if newId might affect sort order and ctime isn't in DisplayImage,
-          // a re-fetch might be simplest or pass ctime through.
-          // Let's assume revalidation covers major resorting or call fetchAllUserImages()
-          return 0; // Re-fetch if strict order is critical post-rename
+      ).sort((a, b) => {
+          // If strict chronological order is critical and ctime is not part of DisplayImage,
+          // a re-fetch might be better. For now, local update is fine.
+          return 0; 
       })
     );
-    // Optionally: fetchAllUserImages(); // to get fresh sort order from server if ctime is primary sort key
+    // Optionally: fetchAllUserImages(); // To get fresh sort order if it's critical
   }, []);
 
 
@@ -156,7 +154,7 @@ export default function MyImagesPage() {
             {userImages.map((image) => (
               <ImagePreviewCard
                 key={image.id}
-                id={image.id}
+                id={image.id} // Pass the full ID: userId/YYYY/MM/DD/filename.ext
                 src={image.previewSrc}
                 url={image.url}
                 name={image.name}
@@ -175,3 +173,4 @@ export default function MyImagesPage() {
     </div>
   );
 }
+

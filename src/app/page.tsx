@@ -1,3 +1,4 @@
+
 // src/app/page.tsx
 "use client";
 
@@ -17,7 +18,7 @@ import { Button } from '@/components/ui/button';
 
 
 interface DisplayImage {
-  id: string; 
+  id: string; // Format: userId/YYYY/MM/DD/filename.ext
   name: string; 
   previewSrc: string; 
   url: string; 
@@ -30,7 +31,7 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [uploadedImages, setUploadedImages] = useState<DisplayImage[]>([]);
   const [isLoadingInitialImages, setIsLoadingInitialImages] = useState(true);
-  const [needsImageFetch, setNeedsImageFetch] = useState(true); // Start with true to fetch on initial load if authenticated
+  const [needsImageFetch, setNeedsImageFetch] = useState(true); 
 
   const fetchUserImages = useCallback(async () => {
     if (authLoading) { 
@@ -46,8 +47,6 @@ export default function Home() {
 
     setIsLoadingInitialImages(true);
     try {
-      // Corrected call: Pass undefined for userIdFromSession to use the session user,
-      // and LATEST_IMAGES_COUNT as the limit.
       const userImagesFromServer = await getUserImages(undefined, LATEST_IMAGES_COUNT); 
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id, 
@@ -66,10 +65,10 @@ export default function Home() {
   }, [user, authLoading]); 
 
   useEffect(() => {
-    if (!authLoading) { // Only trigger fetch if auth state is resolved
+    if (!authLoading) { 
       setNeedsImageFetch(true);     
     }
-  }, [authLoading, user]); // Re-evaluate when user changes too, to fetch if user logs in/out
+  }, [authLoading, user]); 
 
   useEffect(() => {
     if (needsImageFetch) {
@@ -79,38 +78,34 @@ export default function Home() {
   }, [needsImageFetch, fetchUserImages]); 
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    // ImageFile.url from server: `/uploads/users/userId/MM.YYYY/filename.ext`
-    // ImageFile.userId from server: `userId`
-    // We need to construct an ID like: `userId/MM.YYYY/filename.ext`
-    const serverFilename = imageFile.url.split('/').pop() || imageFile.name; 
-    // imageFile.url.split('/') -> ['', 'uploads', 'users', 'USER_ID', 'MM.YYYY', 'filename.ext']
-    // We need 'USER_ID/MM.YYYY/filename.ext', which starts at index 3
-    const userAndPathPart = imageFile.url.split('/').slice(3).join('/');
+    // imageFile.url from server: `/uploads/users/userId/YYYY/MM/DD/filename.ext`
+    // imageFile.userId from server: `userId`
+    // The ID needs to be `userId/YYYY/MM/DD/filename.ext`
+    
+    const urlParts = imageFile.url.split('/');
+    // ['', 'uploads', 'users', 'USER_ID', 'YYYY', 'MM', 'DD', 'filename.ext']
+    // We need 'USER_ID/YYYY/MM/DD/filename.ext', which starts at index 3 of urlParts
+    const imageIdFromServer = urlParts.slice(3).join('/');
     
     const newImage: DisplayImage = {
-      id: userAndPathPart, // Corrected ID construction
-      name: serverFilename, 
+      id: imageIdFromServer, 
+      name: imageFile.name, // The server response 'name' is the actual stored filename
       previewSrc: imageFile.url, 
       url: imageFile.url,
-      uploaderId: imageFile.userId,
+      uploaderId: imageFile.userId, // This is the userId from the server
     };
 
     setUploadedImages((prevImages) => {
         const updatedImages = [newImage, ...prevImages];
         const uniqueImages = updatedImages.filter((img, index, self) =>
-            index === self.findIndex((t) => t.id === img.id) // Use ID for uniqueness
+            index === self.findIndex((t) => t.id === img.id) 
         );
         return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
     });
-    // No need to setNeedsImageFetch(true) here, as revalidation should update
-    // Or, if immediate consistency is critical, fetchUserImages() can be called.
-    // For now, rely on optimistic update and potential revalidation.
   }, []);
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-    // Optionally setNeedsImageFetch(true) if you want to ensure the list is fully accurate from server
-    // especially if the number of images drops below LATEST_IMAGES_COUNT
   }, []);
   
   const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
@@ -119,13 +114,10 @@ export default function Home() {
         image.id === oldImageId
           ? { ...image, id: newImageId, name: newName, url: newUrl, previewSrc: newUrl }
           : image
-      ).sort((a, b) => { // Re-sort if ctime was part of DisplayImage and used for sorting
-          // Assuming fetchUserImages will re-sort correctly upon next fetch if needed
-          // For now, just update the item. If sorting logic is client-side and complex, adjust here.
-          return 0; // Placeholder if no client-side re-sorting based on name/id
+      ).sort((a, b) => { 
+          return 0; 
       })
     );
-     // setNeedsImageFetch(true); // Trigger a re-fetch to ensure list consistency, especially order
   }, []);
   
   return (
@@ -151,7 +143,7 @@ export default function Home() {
                 Upload Your Images
               </h2>
               <p className="mt-4 text-lg text-muted-foreground">
-                Drag & drop your images or click to select files. Max 6MB per image. Supports JPG, PNG, GIF, WebP.
+                Max 6MB per image. Supports JPG, PNG, GIF, WebP.
               </p>
             </div>
             <div className="mt-10 max-w-2xl mx-auto">
@@ -227,7 +219,7 @@ export default function Home() {
             )}
           </section>
         )}
-         {authLoading && ( // Show this loader only when auth is loading, not necessarily image loading
+         {authLoading && ( 
             <div className="flex flex-col justify-center items-center py-16">
                  <Skeleton className="h-12 w-12 rounded-full mb-4" />
                  <Skeleton className="h-6 w-48" />
@@ -237,7 +229,7 @@ export default function Home() {
 
       <footer className="py-8 text-center text-muted-foreground border-t">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
-         <p className="text-xs mt-1">Note: User-specific image directories are created under &apos;public/uploads/users/&apos;.</p>
+         <p className="text-xs mt-1">Note: User-specific image directories are created under &apos;public/uploads/users/&apos; using YYYY/MM/DD structure.</p>
          <p className="text-xs mt-1">Users are stored in users.json (demo only, insecure).</p>
       </footer>
     </div>

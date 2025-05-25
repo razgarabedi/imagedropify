@@ -1,3 +1,4 @@
+
 // src/components/image-preview-card.tsx
 "use client";
 
@@ -35,9 +36,9 @@ import {
 import { Label } from '@/components/ui/label';
 
 interface ImagePreviewCardProps {
-  id: string; // Server ID: `userId/MM.YYYY/filename.ext`
+  id: string; // Server ID, now format: `userId/YYYY/MM/DD/filename.ext`
   src: string; 
-  url: string; // Relative server URL e.g., /uploads/users/userId/MM.YYYY/filename.jpg
+  url: string; // Relative server URL e.g., /uploads/users/userId/YYYY/MM/DD/filename.jpg
   name: string; // filename.ext (original or current name)
   uploaderId: string; // The ID of the user who uploaded this image
   onDelete?: (imageId: string) => void;
@@ -54,13 +55,12 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
   const [isVisible, setIsVisible] = useState(false);
   const [fullUrl, setFullUrl] = useState('');
   
-  // State for rename dialog
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [newNameInput, setNewNameInput] = useState('');
 
-
-  // Derive imagePathFragment and current name without extension for actions
-  const imagePathFragmentForAction = id.substring(id.indexOf('/') + 1); // `MM.YYYY/filename.ext`
+  // The `id` prop is now the full "userId/YYYY/MM/DD/filename.ext"
+  // For deleteImage action, we pass this full ID directly.
+  // For renameImage action, it expects `currentImageId` (which is this `id`) and `newNameWithoutExtension`.
   const currentNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
 
   useEffect(() => {
@@ -70,16 +70,18 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
 
   const [deleteActionState, deleteFormAction, isDeletePending] = useActionState(
     async (currentState: DeleteImageActionState, formData: FormData) => {
-        const fragment = formData.get('imagePathFragment') as string;
-        if (!fragment) return { success: false, error: "Image path fragment is missing."};
-        return deleteImage(currentState, fragment); 
+        // The form data should contain the full image ID (userId/YYYY/MM/DD/filename.ext)
+        // The action expects this full ID as `imagePathFragmentWithUser`
+        const imageIdToDelete = formData.get('imageIdToDelete') as string; 
+        if (!imageIdToDelete) return { success: false, error: "Image ID is missing for deletion."};
+        return deleteImage(currentState, imageIdToDelete); 
     },
     initialDeleteState
   );
 
   const [renameActionState, renameFormAction, isRenamePending] = useActionState(
     async (currentState: RenameImageActionState, formData: FormData) => {
-      // Server action will read currentImagePathFragment and newNameWithoutExtension from formData
+      // Server action will read currentImageId and newNameWithoutExtension from formData
       return renameImage(currentState, formData);
     },
     initialRenameState
@@ -122,14 +124,13 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
       if (onRename) {
         onRename(id, renameActionState.data.newId, renameActionState.data.newName, renameActionState.data.newUrl);
       }
-      setIsRenameDialogOpen(false); // Close dialog on success
+      setIsRenameDialogOpen(false); 
     } else if (!isRenamePending && renameActionState.error) {
       toast({
         variant: 'destructive',
         title: 'Rename Failed',
         description: renameActionState.error,
       });
-      // Keep dialog open for user to retry or cancel
     }
   }, [renameActionState, isRenamePending, toast, id, onRename, name]);
 
@@ -152,7 +153,8 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
 
   const handleDelete = () => {
     const formData = new FormData();
-    formData.append('imagePathFragment', imagePathFragmentForAction);
+    // Pass the full image ID (which is `userId/YYYY/MM/DD/filename.ext`) to the action
+    formData.append('imageIdToDelete', id); 
     startTransition(() => {
         deleteFormAction(formData);
     });
@@ -164,7 +166,8 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
         return;
     }
     const formData = new FormData();
-    formData.append('currentImagePathFragment', imagePathFragmentForAction);
+    // Pass the full current image ID (`userId/YYYY/MM/DD/oldFilename.ext`)
+    formData.append('currentImageId', id); 
     formData.append('newNameWithoutExtension', newNameInput.trim());
     startTransition(() => {
         renameFormAction(formData);
@@ -184,7 +187,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
         <CardTitle className="text-base font-semibold truncate mr-2" title={name}>{name}</CardTitle>
         {canModify && (
           <div className="flex items-center space-x-1">
-            {/* Rename Dialog Trigger */}
             <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" disabled={isRenamePending}>
@@ -225,7 +227,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
               </DialogContent>
             </Dialog>
 
-            {/* Delete Alert Dialog Trigger */}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={isDeletePending}>
@@ -261,7 +262,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, onDelete, onR
           style={{objectFit: "cover"}}
           className="transition-transform duration-300 group-hover:scale-105"
           data-ai-hint="uploaded image"
-          priority={false} // Keep false unless it's critical above-the-fold content
+          priority={false} 
         />
       </CardContent>
       <CardFooter className="p-4 flex-col items-start space-y-2">
