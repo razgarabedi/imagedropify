@@ -8,8 +8,8 @@ import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
 import { getUserImages, type UserImage, listUserFolders, type UserFolder } from '@/app/actions/imageActions';
-import { getHomepageImageUrl as getHomepageImageUrlServiceCall } from '@/lib/settingsService'; // Server action
-import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig'; 
+// getHomepageImageUrlServiceCall is now used within HomepageImageLoader server component
+import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -25,34 +25,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Folder, Image as ImageIconLucide } from 'lucide-react';
+import { HomepageImageLoader } from '@/components/homepage-image-loader'; // Import the new component
 
 
 interface DisplayImage {
-  id: string; 
-  name: string; 
-  previewSrc: string; 
-  url: string; 
+  id: string;
+  name: string;
+  previewSrc: string;
+  url: string;
   uploaderId: string;
   folderName: string;
 }
 
 const LATEST_IMAGES_COUNT = 8;
-
-// Server component to fetch homepage image URL
-async function HomepageImageLoader() {
-  const homepageImageUrl = await getHomepageImageUrlServiceCall();
-  return (
-    <Image 
-        src={homepageImageUrl} 
-        alt="Image sharing concept" 
-        width={300} height={200} 
-        className="mx-auto rounded-lg mb-8 shadow-lg" 
-        data-ai-hint="image sharing illustration"
-        key={homepageImageUrl} // Add key to force re-render if URL changes
-    />
-  );
-}
-
 
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
@@ -65,7 +50,7 @@ export default function Home() {
 
   const fetchUserFoldersForUpload = useCallback(async () => {
     if (!user) {
-        setUserFolders([{ name: DEFAULT_FOLDER_NAME }]); 
+        setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
         return;
     }
@@ -118,7 +103,7 @@ export default function Home() {
       setNeedsImageFetch(true);
       if (user) {
         fetchUserFoldersForUpload();
-      } else { 
+      } else {
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
       }
@@ -134,12 +119,12 @@ export default function Home() {
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
     const newImage: DisplayImage = {
-      id: imageFile.id, 
+      id: imageFile.id,
       name: imageFile.name,
       previewSrc: imageFile.url,
       url: imageFile.url,
       uploaderId: imageFile.userId,
-      folderName: imageFile.folderName, 
+      folderName: imageFile.folderName,
     };
 
     if (newImage.folderName === DEFAULT_FOLDER_NAME) {
@@ -156,7 +141,7 @@ export default function Home() {
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
   }, []);
-  
+
   const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
@@ -166,7 +151,7 @@ export default function Home() {
       )
     );
   }, []);
-  
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -193,7 +178,7 @@ export default function Home() {
                 Supports JPG, PNG, GIF, WebP. Max size varies by user/site setting.
               </p>
             </div>
-            
+
             <div className="mt-6 max-w-md mx-auto">
                 <Label htmlFor="upload-folder-select" className="text-sm font-medium text-muted-foreground">Upload to folder:</Label>
                 <Select value={selectedUploadFolder} onValueChange={setSelectedUploadFolder} disabled={userFolders.length === 0}>
@@ -239,7 +224,7 @@ export default function Home() {
         )}
 
         {!authLoading && user && <Separator className="my-12" />}
-        
+
         {!authLoading && user && (
           <section aria-labelledby="gallery-title">
             <h2 id="gallery-title" className="text-2xl font-semibold text-foreground mb-6 text-center sm:text-left">
@@ -247,7 +232,7 @@ export default function Home() {
             </h2>
             {isLoadingInitialImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => ( 
+                {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
                   <Card key={index} className="shadow-lg">
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
@@ -263,12 +248,12 @@ export default function Home() {
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.map((image) => (
-                  <ImagePreviewCard 
+                  <ImagePreviewCard
                     key={image.id}
-                    id={image.id} 
-                    src={image.previewSrc} 
-                    url={image.url} 
-                    name={image.name} 
+                    id={image.id}
+                    src={image.previewSrc}
+                    url={image.url}
+                    name={image.name}
                     uploaderId={image.uploaderId}
                     onDelete={handleImageDelete}
                     onRename={handleImageRename}
@@ -285,7 +270,7 @@ export default function Home() {
             )}
           </section>
         )}
-         {authLoading && ( 
+         {authLoading && (
             <div className="flex flex-col justify-center items-center py-16">
                  <Skeleton className="h-12 w-12 rounded-full mb-4" />
                  <Skeleton className="h-6 w-48" />
