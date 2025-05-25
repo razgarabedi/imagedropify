@@ -42,16 +42,29 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 
 This application uses PostgreSQL as its database and Prisma as its ORM.
 
-1.  **Install PostgreSQL:**
-    Ensure you have PostgreSQL installed and running on your system. For Ubuntu:
-    ```bash
-    sudo apt update
-    sudo apt install postgresql postgresql-contrib
-    ```
-    After installation, PostgreSQL service usually starts automatically. You can check its status:
-    ```bash
-    sudo systemctl status postgresql
-    ```
+1.  **Install PostgreSQL & Required Libraries:**
+    *   Ensure you have PostgreSQL installed and running on your system. For Ubuntu:
+        ```bash
+        sudo apt update
+        sudo apt install postgresql postgresql-contrib
+        ```
+    *   **Install OpenSSL 1.1 (Required by Prisma on some Ubuntu versions):**
+        Prisma's query engine might require `libssl1.1`. If you encounter Prisma errors related to `libssl.so.1.1` not being found, install it.
+        For Ubuntu 20.04 LTS (Focal) and older (check your Ubuntu version with `lsb_release -a`):
+        ```bash
+        sudo apt install libssl1.1
+        ```
+        For Ubuntu 22.04 LTS (Jammy) and newer, `libssl1.1` is not in the default repositories. You may need to install it manually or use a compatible Prisma query engine. One common way for Jammy:
+        ```bash
+        wget http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+        sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+        rm libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+        ```
+        **Note:** Always prefer packages from official repositories if available for your Ubuntu version. If `libssl1.1` causes issues on newer systems, you might need to explore Prisma's binaryTargets or ensure your system provides a compatible libssl (often libssl3 is present, but Prisma might specifically need 1.1).
+    *   After installation, PostgreSQL service usually starts automatically. You can check its status:
+        ```bash
+        sudo systemctl status postgresql
+        ```
 
 2.  **Access PostgreSQL and Create Database & User:**
     *   Switch to the `postgres` Linux user to access the PostgreSQL prompt:
@@ -103,6 +116,7 @@ This application uses PostgreSQL as its database and Prisma as its ORM.
     ```
     If you encounter an error like `P1012: Environment variable not found: DATABASE_URL`, it means Prisma could not find your `DATABASE_URL`. Double-check your `.env.local` file (its location in the project root and its content).
     If you encounter `P3014: Prisma Migrate could not create the shadow database`, ensure the database user has `CREATEDB` permission (see step 2).
+    If you encounter errors related to `libssl.so.1.1` or similar, ensure OpenSSL 1.1 is installed (see step 1).
 
     If deploying to production, you would typically use:
     ```bash
@@ -133,6 +147,7 @@ This guide outlines deploying ImageDrop on an Ubuntu server (e.g., 20.04, 22.04 
 *   Git installed.
 *   Domain name pointed to your server's IP (recommended for production).
 *   **PostgreSQL Server** accessible to the application, set up as described in the "Database Setup" section above.
+*   **OpenSSL 1.1 libraries** installed if required by Prisma (see "Database Setup" Step 1).
 
 ### 2. Install Node.js, npm, and PM2
 
@@ -348,7 +363,7 @@ server {
             try_files $uri $uri/ =404; # Serve the image or return 404 if not found
         }
         # Deny access to any other file types or directory listings in /uploads/
-        location ~ ^/uploads/ {
+        location ~ ^/uploads/ { # More specific match to avoid conflicts if /uploads/ itself should be accessible for some reason (unlikely here)
              deny all;
              return 403; # Or 404 if you prefer to hide existence
         }
@@ -456,7 +471,7 @@ sudo certbot renew --dry-run # Test renewal
 
 ## Deployment on Ubuntu with Apache & PM2
 
-This guide outlines deploying ImageDrop on an Ubuntu server using Apache as a reverse proxy and PM2 as a process manager. Steps 1-5 and 7-8 (Prerequisites, Node/PM2, App Clone, Env Vars, Build & DB Migrations, File Permissions for `public/uploads`, PM2 Start) are largely similar to the Nginx setup. **Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`.**
+This guide outlines deploying ImageDrop on an Ubuntu server using Apache as a reverse proxy and PM2 as a process manager. Steps 1-5 and 7-8 (Prerequisites, Node/PM2, App Clone, Env Vars, Build & DB Migrations, File Permissions for `public/uploads`, PM2 Start) are largely similar to the Nginx setup. **Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`. Also ensure OpenSSL 1.1 is installed if needed by Prisma.**
 
 **Follow Steps 1-5 from the Nginx section first, ensuring database setup and `DATABASE_URL` is correctly set in `.env.local`.** Then proceed with Apache-specific steps.
 
@@ -574,7 +589,7 @@ sudo certbot renew --dry-run # Test renewal
 ### 13. Troubleshooting (Apache)
 
 *   **Login Fails / Database Issues:** Verify `DATABASE_URL`. Check `pm2 logs imagedrop`. Ensure PostgreSQL is running and accessible.
-*   **Upload Fails / Images Not Displaying (Error: "received text/html")**:
+*   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Apache is NOT serving the static image from `/uploads/`. Request is proxied to Next.js.
     *   **Primary Causes & Solutions (Similar to Nginx):**
         1.  **Permissions for `www-data`**: `www-data` must have read (`r`) on image, execute (`x`) on parent dirs.
@@ -667,3 +682,5 @@ sudo certbot renew --dry-run # Test renewal
     *   The next user to sign up will become the admin. Default site settings will be applied by the application if the `SiteSetting` table is empty (the application logic handles seeding this).
 
 Your ImageDrop application should now be running with your chosen web server and a fresh PostgreSQL database!
+
+    
