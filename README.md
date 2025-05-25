@@ -350,38 +350,40 @@ sudo certbot renew --dry-run
 
 *   **Login Fails:** Check `users.json` status (must be `approved`). Verify `JWT_SECRET_KEY`. Check `pm2 logs imagedrop`.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image for ... received text/html")**:
-    *   This error strongly indicates Nginx is NOT serving the static image file from the `/uploads/` location. Instead, the request is being proxied to the Next.js application, which returns an HTML page (likely a 404 error from Next.js itself).
+    *   This error strongly indicates Nginx is NOT serving the static image file from the `/uploads/` location block. Instead, the request is being proxied to the Next.js application (via `location /`), which returns an HTML page (likely a 404 error from Next.js itself, as Next.js doesn't have a page route for `/uploads/...`). This happens when the `next/image` component tries to fetch the source image for optimization.
     *   **Primary Causes & Solutions:**
         1.  **Permissions for `www-data`**: This is the most common cause. The Nginx user (`www-data`) must have:
             *   Read (`r`) permission on the image file itself.
             *   Execute (`x`) permission on ALL parent directories leading to the image file (e.g., `public`, `uploads`, `users`, `<userId>`, `<folderName>`, `YYYY`, `MM`, `DD`).
             *   **Action**:
-                *   If using ACLs (recommended): Ensure `sudo setfacl -dR -m u:www-data:rx public/uploads` was run correctly. This sets *default* permissions so newly created files/folders inherit `rx` for `www-data`.
-                *   Verify permissions immediately after upload fails for `next/image` (even if direct URL works):
-                    ```bash
-                    # Replace with the actual path to your newly uploaded image
-                    namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
-                    # Check ACLs if used:
-                    getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
-                    getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/
-                    # ...and so on for parent directories up to public/uploads
-                    ```
-                    Look for `r-x` for `www-data` on directories and `r--` on the file. If these are not immediately correct, the default ACLs (`setfacl -dR`) are not working as expected.
-        2.  **Nginx Configuration Not Loaded**:
+                *   **IMMEDIATELY AFTER A FAILED UPLOAD (when `next/image` shows the error):**
+                    *   SSH into your server.
+                    *   Identify the exact path to the newly uploaded image file (e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>`).
+                    *   Check effective permissions for `www-data` along the entire path:
+                        ```bash
+                        sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                        ```
+                        This command shows if `www-data` can traverse each directory and read the file. Look for `r` and `x` on directories, and `r` on the file for `www-data`.
+                    *   Check ACLs if you used them (recommended):
+                        ```bash
+                        getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                        getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/
+                        # ... and so on for parent directories up to public/uploads
+                        ```
+                        Ensure `www-data` has `r-x` (or `rwx` via default ACL) on directories and `r--` (or `rw-` via default ACL) on the file.
+                    *   The `setfacl -dR -m u:www-data:rx public/uploads` command is CRITICAL for *newly created* files/folders to inherit `rx` for `www-data`. If `namei` or `getfacl` show issues immediately after upload, this default ACL might not be applying correctly or there's a timing issue with its propagation that Nginx encounters.
+        2.  **Nginx Configuration Not Loaded/Correct**:
             *   **Action**: Always run `sudo nginx -t` to test your Nginx configuration for syntax errors. Then, `sudo systemctl reload nginx`. If issues persist, try `sudo systemctl restart nginx` as it's a more forceful way to apply changes.
         3.  **Incorrect Nginx `alias` Path**:
             *   Ensure the `alias /var/www/imagedrop/public/uploads/;` path in your Nginx config is exactly correct and points to the directory *containing* the `users` subdirectory. The trailing slash on the alias path is important.
         4.  **Nginx Caching Directives**: The directives `open_file_cache off;`, `sendfile off;`, and `add_header Cache-Control "no-cache, ...";` in the `/uploads/` block are designed to prevent Nginx from caching these files. Ensure they are present and correctly configured.
-    *   **Check Nginx Logs**:
+    *   **Check Nginx Logs (at the moment of failure for `next/image`)**:
         *   `tail -f /var/log/nginx/imagedrop.error.log`
         *   `tail -f /var/log/nginx/imagedrop.access.log`
-        *   If Nginx logs a 404 error for the direct image URL, it means Nginx itself cannot find or access the file (permission/path issue).
-        *   If the access log shows the image URL request getting a 200 status but the browser still shows an error, or if the error log shows the request being handled by the Next.js proxy, it confirms Nginx isn't serving the static file.
-    *   **Specific Case: Direct URL works, `next/image` fails initially**:
-        *   If typing the image URL directly into the browser *immediately after upload* works, but `next/image` on the page shows the error, this could indicate that the Next.js server (when `next/image` attempts to optimize or fetch the image *itself*) is encountering the issue with Nginx not serving the new file correctly to *it*. The same Nginx caching/permission issues apply, but the "client" for Nginx in this internal request is your Next.js server process.
-        *   Ensure the `node_user` (running PM2) also has network access to reach Nginx if it tries to fetch the image via its public URL (though typically `next/image` for local files might not do this, it's a consideration).
+        *   If Nginx error log shows a "permission denied" or "file not found" for the direct image URL when Next.js tries to fetch it, it's a strong indicator of a permission or path issue for Nginx at that specific moment.
+        *   If the access log shows the `/uploads/...` URL request getting a 200 status from the Next.js proxy (i.e., `http://localhost:3000`) instead of being served directly by Nginx, it confirms Nginx isn't serving the static file and is falling back to the application.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit`.
-    *   **PM2/Next.js Logs:** Check `pm2 logs imagedrop` for any application-level errors during upload.
+    *   **PM2/Next.js Logs:** Check `pm2 logs imagedrop` for any application-level errors during upload or image processing.
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or not running. Check `pm2 status` and `pm2 logs imagedrop`.
 
 ### 14. Updating the Application
@@ -405,5 +407,3 @@ sudo certbot renew --dry-run
     *   The next user to sign up will become the admin. Default settings will be applied.
 
 Your ImageDrop application should now be running!
-
-    
