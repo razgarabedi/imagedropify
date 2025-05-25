@@ -57,10 +57,9 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   }
 
   try {
-    await fs.mkdir(fullFolderPath, { recursive: true });
-     // Set permissions for the newly created directory structure if needed
-     // Example: await fs.chmod(fullFolderPath, 0o775); // Adjust permissions as necessary
-     // This might need to be more granular if different parts of the path need different permissions
+    // Explicitly set mode 0o755 (rwxr-xr-x) for created directories.
+    // This ensures owner (node_user) has rwx, and group/others have rx (read/traverse).
+    await fs.mkdir(fullFolderPath, { recursive: true, mode: 0o755 });
   } catch (error) {
     console.error('CRITICAL: Failed to create user-specific folder upload directory structure:', fullFolderPath, error);
     throw new Error(`Failed to prepare upload directory: ${fullFolderPath}. Check server logs and directory permissions.`);
@@ -127,7 +126,7 @@ export async function uploadImage(
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
     const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
     const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
-                                ? userMaxSingleUploadMB
+                                ? userMaxSingleUploadSizeMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -182,8 +181,10 @@ export async function uploadImage(
     }
 
     try {
-      await fs.writeFile(filePath, buffer);
-      // Consider setting permissions for the file: await fs.chmod(filePath, 0o664);
+      // Explicitly set mode 0o644 (rw-r--r--) for the created file.
+      // This ensures owner (node_user) has rw, and group/others have r (read).
+      await fs.writeFile(filePath, buffer, { mode: 0o644 });
+      
       const webDatePath = datePathForUrl.split(path.sep).join('/');
       // URL and ID now include targetFolderName
       const imageUrl = `/uploads/users/${userId}/${targetFolderName}/${webDatePath}/${filename}`;
@@ -654,7 +655,8 @@ export async function createFolderAction(
     } catch (error: any) {
         if (error.code === 'ENOENT') {
             try {
-                await fs.mkdir(resolvedUserBase, { recursive: true });
+                // Explicitly set mode 0o755 (rwxr-xr-x) for the base user directory
+                await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
             } catch (mkdirError) {
                 console.error(`Failed to create base user directory ${resolvedUserBase}:`, mkdirError);
                 return { success: false, error: 'Failed to prepare user storage on server.' };
@@ -667,7 +669,8 @@ export async function createFolderAction(
 
 
     try {
-        await fs.mkdir(folderPath, { recursive: false }); 
+        // Explicitly set mode 0o755 (rwxr-xr-x) for the new folder
+        await fs.mkdir(folderPath, { recursive: false, mode: 0o755 }); 
         revalidatePath('/my-images');
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
