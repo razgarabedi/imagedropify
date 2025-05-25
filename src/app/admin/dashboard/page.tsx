@@ -1,7 +1,7 @@
 // src/app/admin/dashboard/page.tsx
 import { Suspense } from 'react';
 import { getAllUsersWithActivityAction } from '@/app/actions/userActions';
-import { getCurrentMaxUploadSizeAction } from '@/app/actions/settingsActions';
+import { getCurrentSettingsAction } from '@/app/actions/settingsActions'; // Updated import
 import { UserTable } from '@/components/admin/user-table';
 import { SettingsForm } from '@/components/admin/settings-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,6 @@ import { AlertCircle, Users, Settings as SettingsIcon } from 'lucide-react';
 
 
 async function UserManagementSection() {
-  // Renamed response variable for clarity
   const usersListResponse = await getAllUsersWithActivityAction();
 
   if (!usersListResponse.success || !usersListResponse.users) {
@@ -37,7 +36,6 @@ async function UserManagementSection() {
         <CardDescription>Overview of registered users, their status, and activity.</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* UserTable now handles displaying status and actions */}
         <UserTable users={usersListResponse.users} /> 
       </CardContent>
     </Card>
@@ -45,7 +43,8 @@ async function UserManagementSection() {
 }
 
 async function SiteSettingsSection() {
-  const settingsResponse = await getCurrentMaxUploadSizeAction();
+  // Use the new getCurrentSettingsAction to fetch all settings
+  const settingsResponse = await getCurrentSettingsAction();
   
   if (!settingsResponse.success || settingsResponse.currentMaxUploadSizeMB === undefined) {
      return (
@@ -71,7 +70,11 @@ async function SiteSettingsSection() {
         <CardDescription>Configure global application settings.</CardDescription>
       </CardHeader>
       <CardContent>
-        <SettingsForm initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB} />
+        {/* Pass both initial settings to the form */}
+        <SettingsForm 
+            initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB} 
+            initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null}
+        />
       </CardContent>
     </Card>
   );
@@ -88,7 +91,6 @@ export default function AdminDashboardPage() {
       
       <Separator />
 
-      {/* Changed grid layout to stack vertically on smaller screens, then one column */}
       <div className="grid gap-8 md:grid-cols-1"> 
         <Suspense fallback={<UserManagementSkeleton />}>
           <UserManagementSection />
@@ -109,7 +111,6 @@ function UserManagementSkeleton() {
         <CardDescription>View and manage application users.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Adjust skeleton for potentially more columns */}
         <Skeleton className="h-10 w-full" /> 
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />
@@ -127,14 +128,19 @@ function SiteSettingsSkeleton() {
         <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Site Settings</CardTitle>
         <CardDescription>Configure global application settings.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <Skeleton className="h-10 w-1/2" />
-        <Skeleton className="h-10 w-1/4" />
+      <CardContent className="space-y-6"> {/* Increased space for more settings */}
+        <div className="space-y-2">
+            <Skeleton className="h-6 w-1/3" /> {/* Label skeleton */}
+            <Skeleton className="h-10 w-1/2" /> {/* Input skeleton */}
+        </div>
+         <div className="space-y-2">
+            <Skeleton className="h-6 w-1/3" /> {/* Label skeleton */}
+            <Skeleton className="h-10 w-full" /> {/* Input skeleton for URL */}
+        </div>
+        <Skeleton className="h-10 w-1/4" /> {/* Button skeleton */}
       </CardContent>
     </Card>
   );
 }
 
-// Ensure revalidation if needed when actions within this page modify data.
-// This is typically handled by revalidatePath in the server actions themselves.
-export const revalidate = 0; // Or a specific time in seconds, or rely on action-based revalidation
+export const revalidate = 0;

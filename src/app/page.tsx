@@ -1,15 +1,15 @@
-
 // src/app/page.tsx
 "use client";
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Suspense } from 'react';
 import Image from 'next/image';
 import { ImageUploader, type UploadedImageFile as ClientUploadedImageFile } from '@/components/image-uploader';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
 import { getUserImages, type UserImage, listUserFolders, type UserFolder } from '@/app/actions/imageActions';
-import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig'; // Import from new location
+import { getHomepageImageUrl as getHomepageImageUrlServiceCall } from '@/lib/settingsService'; // Server action
+import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig'; 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Folder } from 'lucide-react';
+import { Folder, Image as ImageIconLucide } from 'lucide-react';
 
 
 interface DisplayImage {
@@ -38,6 +38,22 @@ interface DisplayImage {
 
 const LATEST_IMAGES_COUNT = 8;
 
+// Server component to fetch homepage image URL
+async function HomepageImageLoader() {
+  const homepageImageUrl = await getHomepageImageUrlServiceCall();
+  return (
+    <Image 
+        src={homepageImageUrl} 
+        alt="Image sharing concept" 
+        width={300} height={200} 
+        className="mx-auto rounded-lg mb-8 shadow-lg" 
+        data-ai-hint="image sharing illustration"
+        key={homepageImageUrl} // Add key to force re-render if URL changes
+    />
+  );
+}
+
+
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [uploadedImages, setUploadedImages] = useState<DisplayImage[]>([]);
@@ -49,15 +65,13 @@ export default function Home() {
 
   const fetchUserFoldersForUpload = useCallback(async () => {
     if (!user) {
-        setUserFolders([{ name: DEFAULT_FOLDER_NAME }]); // Default if not logged in or no folders
+        setUserFolders([{ name: DEFAULT_FOLDER_NAME }]); 
         setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
         return;
     }
     try {
         const folders = await listUserFolders(user.id);
         setUserFolders(folders.length > 0 ? folders : [{ name: DEFAULT_FOLDER_NAME }]);
-        // If selectedUploadFolder is not in the fetched list, reset to default.
-        // Or if there are no folders (which shouldn't happen as listUserFolders ensures default), set to default.
         if (!folders.some(f => f.name === selectedUploadFolder) || folders.length === 0) {
             setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
         }
@@ -81,7 +95,6 @@ export default function Home() {
     }
     setIsLoadingInitialImages(true);
     try {
-      // Fetch latest images from the user's DEFAULT_FOLDER_NAME for the homepage display
       const userImagesFromServer = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id,
@@ -105,7 +118,7 @@ export default function Home() {
       setNeedsImageFetch(true);
       if (user) {
         fetchUserFoldersForUpload();
-      } else { // Reset folder state if user logs out
+      } else { 
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
       }
@@ -120,10 +133,8 @@ export default function Home() {
   }, [needsImageFetch, authLoading, fetchLatestUserImages]);
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    // ClientUploadedImageFile now includes folderName from server response (which is targetFolderName)
     const newImage: DisplayImage = {
-      // id: imageFile.url.split('/').slice(3).join('/'), // Old way of constructing ID assuming URL structure directly maps
-      id: imageFile.id, // Use the ID directly from the server response data
+      id: imageFile.id, 
       name: imageFile.name,
       previewSrc: imageFile.url,
       url: imageFile.url,
@@ -131,7 +142,6 @@ export default function Home() {
       folderName: imageFile.folderName, 
     };
 
-    // Only add to homepage preview if it was uploaded to the DEFAULT_FOLDER_NAME
     if (newImage.folderName === DEFAULT_FOLDER_NAME) {
         setUploadedImages((prevImages) => {
             const updatedImages = [newImage, ...prevImages];
@@ -184,7 +194,6 @@ export default function Home() {
               </p>
             </div>
             
-            {/* Folder Selector for Upload */}
             <div className="mt-6 max-w-md mx-auto">
                 <Label htmlFor="upload-folder-select" className="text-sm font-medium text-muted-foreground">Upload to folder:</Label>
                 <Select value={selectedUploadFolder} onValueChange={setSelectedUploadFolder} disabled={userFolders.length === 0}>
@@ -216,7 +225,9 @@ export default function Home() {
 
         {!user && !authLoading && (
           <section className="text-center py-16">
-            <Image src="https://placehold.co/300x200.png" alt="Image sharing concept" width={300} height={200} className="mx-auto rounded-lg mb-8 shadow-lg" data-ai-hint="image sharing illustration"/>
+            <Suspense fallback={<Skeleton className="mx-auto rounded-lg mb-8 shadow-lg w-[300px] h-[200px]" />}>
+                <HomepageImageLoader />
+            </Suspense>
             <h2 className="text-4xl font-extrabold tracking-tight text-foreground mb-4">Welcome to ImageDrop!</h2>
             <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
               The easiest way to upload and share your images. Securely store your memories and share them with friends, family, or the world.
@@ -246,7 +257,7 @@ export default function Home() {
               </div>
             ) : uploadedImages.length === 0 ? (
               <div className="text-center py-10">
-                <Image src="https://placehold.co/200x200.png" alt="No images uploaded by user" width={150} height={150} className="mx-auto rounded-lg opacity-50 mb-4" data-ai-hint="empty state folder" />
+                <ImageIconLucide className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-4" data-ai-hint="empty state folder" />
                 <p className="text-muted-foreground text-lg">You haven&apos;t uploaded any images yet to the &quot;{DEFAULT_FOLDER_NAME}&quot; folder. Start by uploading an image above!</p>
               </div>
             ) : (
@@ -285,9 +296,9 @@ export default function Home() {
       <footer className="py-8 text-center text-muted-foreground border-t">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
          <p className="text-xs mt-1">Images are stored in user-specific folders under &apos;public/uploads/users/userId/folderName/YYYY/MM/DD/&apos;.</p>
-         <p className="text-xs mt-1">Users are stored in users.json (demo only, insecure).</p>
+         <p className="text-xs mt-1">User data is stored in users.json (demo only, insecure).</p>
+         <p className="text-xs mt-1">Site settings are in server-settings.json.</p>
       </footer>
     </div>
   );
 }
-

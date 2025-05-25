@@ -1,3 +1,4 @@
 {
-  "maxUploadSizeMB": 6
+  "maxUploadSizeMB": 6,
+  "homepageImageUrl": "https://placehold.co/300x200.png"
 }
