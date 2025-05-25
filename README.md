@@ -269,11 +269,24 @@ server {
         # Disable sendfile for this location; can help with serving recently modified files
         sendfile off;
 
-        # Security: Prevent execution of scripts in uploads folder
-        location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
-            deny all;
-            return 403;
+        # Security: Only allow specific image file extensions to be served.
+        # Deny all other file types.
+        location ~* \.(jpg|jpeg|png|gif|webp)$ {
+            # Nginx will serve the file if it exists due to the alias.
+            # try_files ensures Nginx serves the file or returns 404, not passing to backend.
+            try_files $uri $uri/ =404; 
         }
+
+        # Deny access to any other file or directory within /uploads/ not matching above.
+        # This will catch requests for .env, .json, scripts, etc.
+        # Note: A request for a non-existent image that matches the extensions above
+        # will result in a 404 from the try_files. A request for a non-image file (e.g., /uploads/test.txt)
+        # will fall through here and be denied.
+        location ~ ^/uploads/ { # Catches anything under /uploads/ not handled by the image extension rule
+            deny all;
+            return 403; # Or 404 if you prefer to hide its existence
+        }
+        
         # Prevent MIME type sniffing
         add_header X-Content-Type-Options "nosniff";
     }
@@ -342,7 +355,7 @@ sudo certbot renew --dry-run
 *   **File Permissions**: Critical. Review Step 7 carefully. `node_user` needs write access to `users.json`, `server-settings.json`, `folder-shares.json`, and `public/uploads/...`. `www-data` needs read access to images in `public/uploads/...` and execute access on directories in the path. **Default ACLs (`setfacl -dR`) are vital.**
 *   **Nginx Configuration**:
     *   `client_max_body_size` matches Next.js.
-    *   `/uploads/` location serves images correctly, prevents script execution, and has appropriate caching headers (`open_file_cache off;`, `sendfile off;`, `Cache-Control`). **Always run `sudo nginx -t && sudo systemctl reload nginx` (or `restart`) after Nginx config changes.**
+    *   `/uploads/` location serves images correctly, denies non-image files, and has appropriate caching headers (`open_file_cache off;`, `sendfile off;`, `Cache-Control`). **Always run `sudo nginx -t && sudo systemctl reload nginx` (or `restart`) after Nginx config changes.**
 *   **Input Validation**: Server actions use Zod for input validation.
 *   **HTTPS**: Use in production (Step 11).
 
@@ -377,6 +390,7 @@ sudo certbot renew --dry-run
         3.  **Incorrect Nginx `alias` Path**:
             *   Ensure the `alias /var/www/imagedrop/public/uploads/;` path in your Nginx config is exactly correct and points to the directory *containing* the `users` subdirectory. The trailing slash on the alias path is important.
         4.  **Nginx Caching Directives**: The directives `open_file_cache off;`, `sendfile off;`, and `add_header Cache-Control "no-cache, ...";` in the `/uploads/` block are designed to prevent Nginx from caching these files. Ensure they are present and correctly configured.
+        5.  **Nginx Location Block Specificity**: If you have other location blocks that might inadvertently match `/uploads/...` requests before the intended one, this could be an issue. The provided config tries to make the `/uploads/` block specific, but review your full Nginx config.
     *   **Check Nginx Logs (at the moment of failure for `next/image`)**:
         *   `tail -f /var/log/nginx/imagedrop.error.log`
         *   `tail -f /var/log/nginx/imagedrop.access.log`
