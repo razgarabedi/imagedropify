@@ -6,19 +6,17 @@ import fs from 'fs/promises';
 import path from 'path';
 import { stat } from 'fs/promises';
 import { revalidatePath } from 'next/cache';
-import { getCurrentUserIdFromSession, findUserById } from '@/lib/auth/service'; 
+import { getCurrentUserIdFromSession, findUserById } from '@/lib/auth/service';
 import { getMaxUploadSizeMB as getGlobalMaxUploadSizeMB } from '@/lib/settingsService';
 import type { User } from '@/lib/auth/types';
+import { 
+    DEFAULT_FOLDER_NAME, 
+    MAX_FILENAME_LENGTH,
+    ACCEPTED_IMAGE_TYPES,
+    MIME_TO_EXTENSION
+} from '@/lib/imageConfig';
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-const MIME_TO_EXTENSION: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-};
-const MAX_FILENAME_LENGTH = 200; 
 
 // Returns a path like "YYYY/MM/DD"
 function getFormattedDatePath(): string {
@@ -26,42 +24,57 @@ function getFormattedDatePath(): string {
   const year = now.getFullYear().toString();
   const month = (now.getMonth() + 1).toString().padStart(2, '0');
   const day = now.getDate().toString().padStart(2, '0');
-  return path.join(year, month, day); // Uses path.join for OS-agnostic path segments
+  return path.join(year, month, day);
 }
 
-async function ensureUploadDirsExist(userId: string): Promise<string> {
+// Ensures upload directories exist, including the specified folderName
+async function ensureUploadDirsExist(userId: string, folderName: string): Promise<string> {
   if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
     console.error('Invalid User ID for directory creation:', userId);
     throw new Error('Invalid user ID format.');
   }
+  // Validate folderName: prevent path traversal, empty names, or excessively long names
+  if (!folderName || folderName.includes('..') || folderName.includes('/') || folderName.length > 100) {
+    console.error('Invalid folderName for directory creation:', folderName);
+    throw new Error('Invalid folder name format or length.');
+  }
+
   const datePath = getFormattedDatePath(); // "YYYY/MM/DD"
-  const userSpecificPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, datePath);
+  // Path structure: userId/folderName/YYYY/MM/DD
+  const fullFolderPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName, datePath);
 
-  const resolvedUserSpecificPath = path.resolve(userSpecificPath);
-  const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
+  const resolvedFullFolderPath = path.resolve(fullFolderPath);
+  // Base path for security check: uploads/users/userId/folderName
+  const resolvedUserFolderBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName));
 
-  if (!resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.sep) &&
-      !resolvedUserSpecificPath.startsWith(resolvedUploadDirBase + path.win32.sep) ||
-       resolvedUserSpecificPath === resolvedUploadDirBase) { 
-      console.error(`Security alert: Attempt to create directory outside designated uploads area. Path: ${userSpecificPath}, UserID: ${userId}`);
-      throw new Error('Path is outside allowed directory for user uploads.');
+
+  if (!resolvedFullFolderPath.startsWith(resolvedUserFolderBase + path.sep) &&
+      !resolvedFullFolderPath.startsWith(resolvedUserFolderBase + path.win32.sep) ||
+       resolvedFullFolderPath === resolvedUserFolderBase) {
+      console.error(`Security alert: Attempt to create directory outside designated folder area. Path: ${fullFolderPath}, UserID: ${userId}, Folder: ${folderName}`);
+      throw new Error('Path is outside allowed directory for user folder uploads.');
   }
 
   try {
-    await fs.mkdir(userSpecificPath, { recursive: true });
+    await fs.mkdir(fullFolderPath, { recursive: true });
+     // Set permissions for the newly created directory structure if needed
+     // Example: await fs.chmod(fullFolderPath, 0o775); // Adjust permissions as necessary
+     // This might need to be more granular if different parts of the path need different permissions
   } catch (error) {
-    console.error('CRITICAL: Failed to create user-specific upload directory structure:', userSpecificPath, error);
-    throw new Error(`Failed to prepare upload directory: ${userSpecificPath}. Check server logs and directory permissions.`);
+    console.error('CRITICAL: Failed to create user-specific folder upload directory structure:', fullFolderPath, error);
+    throw new Error(`Failed to prepare upload directory: ${fullFolderPath}. Check server logs and directory permissions.`);
   }
-  return userSpecificPath;
+  return fullFolderPath;
 }
 
 
 export interface UploadedImageServerData {
+  id: string; // Now: userId/folderName/YYYY/MM/DD/filename.ext
   name: string;
-  url: string;
+  url: string; // Now: /uploads/users/userId/folderName/YYYY/MM/DD/filename.ext
   originalName: string;
   userId: string;
+  folderName: string;
 }
 
 export interface UploadImageActionState {
@@ -84,23 +97,30 @@ export async function uploadImage(
     if (!user) {
         return { success: false, error: 'User not found.' };
     }
-    
     if (user.status !== 'approved') {
        return { success: false, error: `Account status is '${user.status}'. Uploads require 'approved' status.` };
     }
 
-    // --- Limit Checks ---
+    const folderNameInput = formData.get('folderName') as string | null;
+    const targetFolderName = (folderNameInput && folderNameInput.trim() !== "") ? folderNameInput.trim() : DEFAULT_FOLDER_NAME;
+
+    // Validate targetFolderName against potentially harmful characters or patterns
+    if (targetFolderName.includes('..') || targetFolderName.includes('/') || targetFolderName.includes('\\')) {
+        return { success: false, error: 'Invalid folder name specified for upload.' };
+    }
+
+
     if (user.maxImages !== null && user.maxImages !== undefined) {
-        const currentImageCount = await countUserImages(userId);
+        const currentImageCount = await countUserImages(userId, null); // Count across all folders
         if (currentImageCount >= user.maxImages) {
             return { success: false, error: `Upload limit reached (${user.maxImages} images). Please delete some images to upload more.` };
         }
     }
     
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
-    const userMaxSingleUploadMB = user.maxSingleUploadSizeMB; 
-    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadMB !== undefined 
-                                ? userMaxSingleUploadMB 
+    const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
+    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
+                                ? userMaxSingleUploadMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -108,80 +128,71 @@ export async function uploadImage(
     if (!file) {
       return { success: false, error: 'No file provided.' };
     }
-
     if (file.size > effectiveMaxSingleBytes) {
-       return { success: false, error: `File too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Maximum allowed size for you is ${effectiveMaxSingleMB}MB.` };
+       return { success: false, error: `File too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Max allowed for you: ${effectiveMaxSingleMB}MB.` };
     }
-
      if (user.maxTotalStorageMB !== null && user.maxTotalStorageMB !== undefined) {
         const currentTotalStorageBytes = await calculateUserTotalStorage(userId);
         const maxTotalStorageBytes = user.maxTotalStorageMB * 1024 * 1024;
         const projectedTotalBytes = currentTotalStorageBytes + file.size;
-
         if (projectedTotalBytes > maxTotalStorageBytes) {
-            const currentTotalMB = (currentTotalStorageBytes / (1024*1024)).toFixed(2);
-            const neededMB = (file.size / (1024*1024)).toFixed(2);
-            return { success: false, error: `Insufficient storage space. You need ${neededMB}MB, but have ${currentTotalMB}MB used out of your ${user.maxTotalStorageMB}MB limit.` };
+            return { success: false, error: `Insufficient storage space. You need ${(file.size / (1024*1024)).toFixed(2)}MB, current usage: ${(currentTotalStorageBytes / (1024*1024)).toFixed(2)}MB / ${user.maxTotalStorageMB}MB limit.` };
         }
     }
 
-    // --- End Limit Checks ---
-
     let currentActualUploadPath: string;
     try {
-      currentActualUploadPath = await ensureUploadDirsExist(userId); // This returns the full path including YYYY/MM/DD
+      currentActualUploadPath = await ensureUploadDirsExist(userId, targetFolderName);
     } catch (error: any) {
       console.error('Upload directory preparation failed:', error);
-      return { success: false, error: error.message || 'Server error preparing upload directory. Contact support.' };
+      return { success: false, error: error.message || 'Server error preparing upload directory.' };
     }
 
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      return { success: false, error: `Invalid file type. Accepted types: JPG, PNG, GIF, WebP. You provided: ${file.type}` };
+      return { success: false, error: `Invalid file type. Accepted: JPG, PNG, GIF, WebP. Provided: ${file.type}` };
     }
-
     const fileExtension = MIME_TO_EXTENSION[file.type];
     if (!fileExtension) {
-      return { success: false, error: `File type (${file.type}) is not supported or cannot be mapped to an extension.` };
+      return { success: false, error: `Unsupported file type (${file.type}).` };
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-
     const safeOriginalNamePart = path.basename(file.name, path.extname(file.name))
-                                   .replace(/[^a-zA-Z0-9_-]/g, '_') 
-                                   .substring(0, 50); 
+                                   .replace(/[^a-zA-Z0-9_-]/g, '_')
+                                   .substring(0, 50);
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-    const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH); 
-
+    const filename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH);
     const filePath = path.join(currentActualUploadPath, filename);
-    const datePathForUrl = getFormattedDatePath(); // "YYYY/MM/DD" but using system-specific separators
+    
+    const datePathForUrl = getFormattedDatePath(); 
 
-    // --- Path Safety Check ---
     const resolvedFilePath = path.resolve(filePath);
     if (!resolvedFilePath.startsWith(path.resolve(currentActualUploadPath) + path.sep) &&
         !resolvedFilePath.startsWith(path.resolve(currentActualUploadPath) + path.win32.sep) ){
          console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePath}`);
          throw new Error('File path is outside allowed directory.');
     }
-    // --- End Path Safety Check ---
 
     try {
       await fs.writeFile(filePath, buffer);
-      // Ensure URL uses forward slashes for web compatibility
-      const webDatePath = datePathForUrl.split(path.sep).join('/'); 
-      const imageUrl = `/uploads/users/${userId}/${webDatePath}/${filename}`;
+      // Consider setting permissions for the file: await fs.chmod(filePath, 0o664);
+      const webDatePath = datePathForUrl.split(path.sep).join('/');
+      // URL and ID now include targetFolderName
+      const imageUrl = `/uploads/users/${userId}/${targetFolderName}/${webDatePath}/${filename}`;
+      const imageId = `${userId}/${targetFolderName}/${webDatePath}/${filename}`;
 
       revalidatePath('/');
       revalidatePath('/my-images');
-      revalidatePath(`/admin/dashboard`); 
+      revalidatePath(`/admin/dashboard`);
 
       return {
         success: true,
-        data: { name: filename, url: imageUrl, originalName: file.name, userId },
+        data: { id: imageId, name: filename, url: imageUrl, originalName: file.name, userId, folderName: targetFolderName },
       };
     } catch (error: any) {
       console.error('Failed to save file to disk:', filePath, error);
-      return { success: false, error: 'Failed to save file on server. Please try again or contact support if the issue persists.' };
+      return { success: false, error: 'Failed to save file on server.' };
     }
   } catch (e: any) {
     console.error("Unexpected error in uploadImage action:", e);
@@ -189,225 +200,248 @@ export async function uploadImage(
   }
 }
 
-
 export interface UserImage {
-  id: string; // Format: userId/YYYY/MM/DD/filename.ext
+  id: string; // Format: userId/folderName/YYYY/MM/DD/filename.ext
   name: string;
   url: string;
-  ctime: number; 
-  size: number; 
+  ctime: number;
+  size: number;
   userId: string;
+  folderName: string;
 }
 
-export async function getUserImages(userIdFromSession?: string, limit?: number): Promise<UserImage[]> {
+// Fetches images. If targetFolderName is null, it fetches for ALL folders of the user.
+// If targetFolderName is specified, it fetches only for that folder.
+export async function getUserImages(userIdFromSession?: string, limit?: number, targetFolderName?: string | null): Promise<UserImage[]> {
   const userId = userIdFromSession || await getCurrentUserIdFromSession();
   if (!userId) {
     console.log("getUserImages: No userId provided or found in session.");
     return [];
   }
 
-  const userBaseDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userId);
-
-  try {
-    const resolvedUserBaseDir = path.resolve(userBaseDir);
-    const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
-
-    if (!resolvedUserBaseDir.startsWith(resolvedUploadDirBase + path.sep) &&
-        !resolvedUserBaseDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
-        resolvedUserBaseDir === resolvedUploadDirBase) {
-        console.error(`Security alert: Attempt to access images outside designated user uploads area. Path: ${userBaseDir}, UserID: ${userId}`);
-        return [];
+  const allImages: UserImage[] = [];
+  
+  let foldersToScan: string[] = [];
+  if (targetFolderName === null) { // Fetch from all folders
+    const userFolders = await listUserFolders(userId);
+    foldersToScan = userFolders.map(f => f.name);
+    if (!foldersToScan.includes(DEFAULT_FOLDER_NAME)) { // Ensure default folder is scanned if fetching all
+        foldersToScan.push(DEFAULT_FOLDER_NAME);
     }
-    await fs.access(resolvedUserBaseDir);
-  } catch (error: any) {
-     if (error.code === 'ENOENT') {
-        return []; 
-     }
-     console.error(`Error accessing user base directory ${userBaseDir}:`, error);
-     return [];
+  } else if (targetFolderName) { // Fetch from a specific folder
+    foldersToScan = [targetFolderName];
+  } else {
+    // If targetFolderName is undefined (or empty string, though UI should prevent that), default to DEFAULT_FOLDER_NAME
+    foldersToScan = [DEFAULT_FOLDER_NAME];
   }
 
-  const allImages: UserImage[] = [];
-  const yearDirRegex = /^\d{4}$/;
-  const monthDirRegex = /^\d{2}$/;
-  const dayDirRegex = /^\d{2}$/;
 
-  try {
-    const yearDirs = await fs.readdir(userBaseDir, { withFileTypes: true });
+  for (const folderName of foldersToScan) {
+    const userFolderBaseDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName);
 
-    for (const yearDirent of yearDirs) {
-      if (yearDirent.isDirectory() && yearDirRegex.test(yearDirent.name)) {
-        const yearPath = path.join(userBaseDir, yearDirent.name);
-        const monthDirs = await fs.readdir(yearPath, { withFileTypes: true });
+    try {
+      const resolvedUserFolderBaseDir = path.resolve(userFolderBaseDir);
+      const resolvedUploadDirBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId)); // User's root
 
-        for (const monthDirent of monthDirs) {
-          if (monthDirent.isDirectory() && monthDirRegex.test(monthDirent.name)) {
-            const monthPath = path.join(yearPath, monthDirent.name);
-            const dayDirs = await fs.readdir(monthPath, { withFileTypes: true });
+      if (!resolvedUserFolderBaseDir.startsWith(resolvedUploadDirBase + path.sep) &&
+          !resolvedUserFolderBaseDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
+          resolvedUserFolderBaseDir === path.resolve(UPLOAD_DIR_BASE_PUBLIC) // Prevent scanning above users dir
+          ) {
+          console.error(`Security alert: Attempt to access images outside designated user folder area. Path: ${userFolderBaseDir}, UserID: ${userId}, Folder: ${folderName}`);
+          continue; // Skip this folder
+      }
+      await fs.access(resolvedUserFolderBaseDir);
+    } catch (error: any) {
+       if (error.code === 'ENOENT') {
+          // If the default folder doesn't exist yet (e.g. user hasn't uploaded anything to it),
+          // it's not an error, just means no images there.
+          if (folderName === DEFAULT_FOLDER_NAME && targetFolderName !== null) {
+            // console.log(`Default folder ${DEFAULT_FOLDER_NAME} for user ${userId} does not exist yet.`);
+          } else if (folderName !== DEFAULT_FOLDER_NAME) {
+            // console.log(`User-created folder ${folderName} for user ${userId} does not exist.`);
+          }
+          continue; // Folder doesn't exist, skip
+       }
+       console.error(`Error accessing user folder base directory ${userFolderBaseDir}:`, error);
+       continue; // Skip this folder on other errors
+    }
 
-            for (const dayDirent of dayDirs) {
-              if (dayDirent.isDirectory() && dayDirRegex.test(dayDirent.name)) {
-                const dayPath = path.join(monthPath, dayDirent.name);
-                
-                // Security Check: Ensure dayPath is within user's base directory structure
-                const resolvedDayPath = path.resolve(dayPath);
-                 if (!resolvedDayPath.startsWith(path.resolve(userBaseDir) + path.sep) &&
-                     !resolvedDayPath.startsWith(path.resolve(userBaseDir) + path.win32.sep)
-                    ) {
-                    console.warn(`Skipping potentially incorrect path structure: ${dayPath} is not under ${userBaseDir}`);
-                    continue;
-                }
+    const yearDirRegex = /^\d{4}$/;
+    const monthDirRegex = /^\d{2}$/;
+    const dayDirRegex = /^\d{2}$/;
 
-                try {
-                  const filesInDayFolder = await fs.readdir(dayPath);
-                  const imageFileDetails = await Promise.all(
-                    filesInDayFolder.map(async (file) => {
-                      if (file.includes('..') || file.includes('/') || file.includes(path.win32.sep)) {
-                        console.warn(`Skipping potentially malicious file name: ${file}`);
-                        return null;
-                      }
-                      
-                      const filePath = path.join(dayPath, file);
-                      const resolvedFilePath = path.resolve(filePath);
-                       if (!resolvedFilePath.startsWith(resolvedDayPath + path.sep) &&
-                           !resolvedFilePath.startsWith(resolvedDayPath + path.win32.sep)) {
-                            console.warn(`Skipping potentially incorrect file path: ${filePath} is not directly under ${dayPath}`);
-                            return null;
-                       }
+    try {
+      const yearDirs = await fs.readdir(userFolderBaseDir, { withFileTypes: true });
+      for (const yearDirent of yearDirs) {
+        if (yearDirent.isDirectory() && yearDirRegex.test(yearDirent.name)) {
+          const yearPath = path.join(userFolderBaseDir, yearDirent.name);
+          const monthDirs = await fs.readdir(yearPath, { withFileTypes: true });
+          for (const monthDirent of monthDirs) {
+            if (monthDirent.isDirectory() && monthDirRegex.test(monthDirent.name)) {
+              const monthPath = path.join(yearPath, monthDirent.name);
+              const dayDirs = await fs.readdir(monthPath, { withFileTypes: true });
+              for (const dayDirent of dayDirs) {
+                if (dayDirent.isDirectory() && dayDirRegex.test(dayDirent.name)) {
+                  const dayPath = path.join(monthPath, dayDirent.name);
+                  const resolvedDayPath = path.resolve(dayPath);
+                   if (!resolvedDayPath.startsWith(path.resolve(userFolderBaseDir) + path.sep) &&
+                       !resolvedDayPath.startsWith(path.resolve(userFolderBaseDir) + path.win32.sep)
+                      ) {
+                      console.warn(`Skipping potentially incorrect path structure: ${dayPath}`);
+                      continue;
+                  }
 
-                      try {
-                        const statsResult = await stat(filePath);
-                        const validExtensions = Object.values(MIME_TO_EXTENSION);
-                        if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
-                          const webDatePath = `${yearDirent.name}/${monthDirent.name}/${dayDirent.name}`;
-                          return {
-                            id: `${userId}/${webDatePath}/${file}`, // Use web-friendly path for ID
-                            name: file,
-                            url: `/uploads/users/${userId}/${webDatePath}/${file}`, // Use web-friendly path for URL
-                            ctime: statsResult.ctimeMs,
-                            size: statsResult.size,
-                            userId: userId,
-                          };
+                  try {
+                    const filesInDayFolder = await fs.readdir(dayPath);
+                    const imageFileDetails = await Promise.all(
+                      filesInDayFolder.map(async (file) => {
+                        if (file.includes('..') || file.includes('/') || file.includes(path.win32.sep)) {
+                          console.warn(`Skipping potentially malicious file name: ${file}`);
+                          return null;
                         }
-                      } catch (statError: any) {
-                         if (statError.code !== 'ENOENT') {
-                             console.error(`Error getting stats for file ${filePath}:`, statError);
+                        const filePath = path.join(dayPath, file);
+                        const resolvedFilePath = path.resolve(filePath);
+                         if (!resolvedFilePath.startsWith(resolvedDayPath + path.sep) &&
+                             !resolvedFilePath.startsWith(resolvedDayPath + path.win32.sep)) {
+                              console.warn(`Skipping potentially incorrect file path: ${filePath}`);
+                              return null;
                          }
-                         return null; 
-                      }
-                      return null;
-                    })
-                  );
-                  allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
-                } catch (readDirError) {
-                     console.error(`Error reading directory ${dayPath}:`, readDirError);
+                        try {
+                          const statsResult = await stat(filePath);
+                          const validExtensions = Object.values(MIME_TO_EXTENSION);
+                          if (statsResult.isFile() && validExtensions.some(ext => file.toLowerCase().endsWith(ext))) {
+                            const webDatePath = `${yearDirent.name}/${monthDirent.name}/${dayDirent.name}`;
+                            return {
+                              id: `${userId}/${folderName}/${webDatePath}/${file}`,
+                              name: file,
+                              url: `/uploads/users/${userId}/${folderName}/${webDatePath}/${file}`,
+                              ctime: statsResult.ctimeMs,
+                              size: statsResult.size,
+                              userId: userId,
+                              folderName: folderName,
+                            };
+                          }
+                        } catch (statError: any) {
+                           if (statError.code !== 'ENOENT') console.error(`Error getting stats for file ${filePath}:`, statError);
+                           return null;
+                        }
+                        return null;
+                      })
+                    );
+                    allImages.push(...imageFileDetails.filter((file): file is UserImage => file !== null));
+                  } catch (readDirError) {
+                       console.error(`Error reading directory ${dayPath}:`, readDirError);
+                  }
                 }
               }
             }
           }
         }
       }
+    } catch (error) {
+      console.error(`Failed to read/process image dirs for user ${userId}, folder ${folderName}:`, error);
     }
+  } // End folder loop
 
-    allImages.sort((a, b) => b.ctime - a.ctime);
-
-    if (limit) {
-        return allImages.slice(0, limit);
-    }
-    return allImages;
-
-  } catch (error) {
-    console.error(`Failed to read or process user image directories for user ${userId}:`, error);
-    return []; 
+  allImages.sort((a, b) => b.ctime - a.ctime);
+  // Apply limit only if fetching for a specific folder OR globally (if targetFolderName is null).
+  // If targetFolderName is null, the limit applies to the grand total after iterating all folders.
+  // If targetFolderName is specified, the limit applies to that folder's content.
+  if (limit) { 
+      return allImages.slice(0, limit);
   }
+  return allImages;
 }
+
 
 export async function calculateUserTotalStorage(userId: string): Promise<number> {
    if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
     console.error('Invalid User ID for calculating storage:', userId);
     return 0;
   }
-  const allUserImages = await getUserImages(userId); 
+  const allUserImages = await getUserImages(userId, undefined, null); // Get all images from all folders
   const totalSize = allUserImages.reduce((acc, image) => acc + image.size, 0);
   return totalSize;
 }
 
-
-export async function countUserImages(userId: string): Promise<number> {
+export async function countUserImages(userId: string, targetFolderName?: string | null): Promise<number> {
   if (!userId || typeof userId !== 'string' || userId.includes('..') || userId.includes('/')) {
     console.error('Invalid User ID for counting images:', userId);
     return 0;
   }
-  const userImages = await getUserImages(userId); 
+  // If targetFolderName is null, count across all folders. If specified, count in that folder.
+  const userImages = await getUserImages(userId, undefined, targetFolderName);
   return userImages.length;
 }
-
 
 export interface DeleteImageActionState {
     success: boolean;
     error?: string;
 }
 
+// imageId is now format: "userId/folderName/YYYY/MM/DD/filename.ext"
 export async function deleteImage(
   prevState: DeleteImageActionState,
-  imagePathFragmentWithUser: string // Now format: "userId/YYYY/MM/DD/filename.ext"
+  imageId: string
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
     return { success: false, error: 'User authentication required for deletion.' };
   }
-  
-  // Validate fragment structure and components
-  if (typeof imagePathFragmentWithUser !== 'string' || imagePathFragmentWithUser.includes('..')) {
-    console.error(`Security alert: Invalid imagePathFragment (contains '..' or not a string). User: ${requestingUserId}, Fragment: ${imagePathFragmentWithUser}`);
-    return { success: false, error: 'Invalid image path format for deletion (contains ..).' };
+
+  if (typeof imageId !== 'string' || imageId.includes('..')) {
+    console.error(`Security alert: Invalid imageId (contains '..'). User: ${requestingUserId}, ID: ${imageId}`);
+    return { success: false, error: 'Invalid image ID format (contains ..).' };
   }
 
-  const parts = imagePathFragmentWithUser.split('/');
-  if (parts.length !== 5) { // userId, YYYY, MM, DD, filename
-    console.error(`Security alert: Invalid imagePathFragment structure. Expected 5 parts, got ${parts.length}. User: ${requestingUserId}, Fragment: ${imagePathFragmentWithUser}`);
-    return { success: false, error: 'Invalid image path format for deletion (structure).' };
+  const parts = imageId.split('/');
+  if (parts.length !== 6) { // userId, folderName, YYYY, MM, DD, filename
+    console.error(`Security alert: Invalid imageId structure. Expected 6 parts, got ${parts.length}. User: ${requestingUserId}, ID: ${imageId}`);
+    return { success: false, error: 'Invalid image ID format (structure).' };
   }
 
   const imageOwnerId = parts[0];
-  const yearPart = parts[1];
-  const monthPart = parts[2];
-  const dayPart = parts[3];
-  const filename = parts[4];
+  const folderName = parts[1];
+  const yearPart = parts[2];
+  const monthPart = parts[3];
+  const dayPart = parts[4];
+  const filename = parts[5];
 
   if (requestingUserId !== imageOwnerId) {
-     console.error(`Security alert: User ${requestingUserId} attempted to delete image owned by ${imageOwnerId}. Fragment: ${imagePathFragmentWithUser}`);
+     console.error(`Security alert: User ${requestingUserId} attempted to delete image owned by ${imageOwnerId}. ID: ${imageId}`);
      return { success: false, error: 'Unauthorized: You can only delete your own images.' };
   }
-
-
+  if (!folderName || folderName.includes('/') || folderName.includes('\\') || folderName.includes('..')) {
+      console.error(`Security alert: Invalid folderName component in ID. User: ${requestingUserId}, Folder: ${folderName}`);
+      return { success: false, error: 'Invalid image ID format (folderName).' };
+  }
   if (!/^\d{4}$/.test(yearPart) || !/^\d{2}$/.test(monthPart) || !/^\d{2}$/.test(dayPart)) {
-      console.error(`Security alert: Invalid date components in fragment. User: ${requestingUserId}, Fragment: ${imagePathFragmentWithUser}`);
-      return { success: false, error: 'Invalid image path format for deletion (date parts).' };
+      console.error(`Security alert: Invalid date components in ID. User: ${requestingUserId}, ID: ${imageId}`);
+      return { success: false, error: 'Invalid image ID format (date parts).' };
   }
   if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
-      console.error(`Security alert: Invalid filename component in fragment. User: ${requestingUserId}, Filename: ${filename}`);
-      return { success: false, error: 'Invalid image path format for deletion (filename).' };
+      console.error(`Security alert: Invalid filename component in ID. User: ${requestingUserId}, Filename: ${filename}`);
+      return { success: false, error: 'Invalid image ID format (filename).' };
   }
 
-  const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageOwnerId, yearPart, monthPart, dayPart, filename);
-
-  const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
+  const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageOwnerId, folderName, yearPart, monthPart, dayPart, filename);
+  // Security check base path: uploads/users/userId/folderName/
+  const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
   const resolvedFullPath = path.resolve(fullServerPath);
 
-  if (!resolvedFullPath.startsWith(userBaseDir + path.sep) &&
-      !resolvedFullPath.startsWith(userBaseDir + path.win32.sep)) {
-      console.error(`Security alert: User ${requestingUserId} attempted to delete path outside their directory: ${fullServerPath}`);
-      return { success: false, error: 'Unauthorized attempt to delete file. Path is outside your allowed directory.' };
+  if (!resolvedFullPath.startsWith(userFolderBaseDir + path.sep) &&
+      !resolvedFullPath.startsWith(userFolderBaseDir + path.win32.sep)) {
+      console.error(`Security alert: User ${requestingUserId} attempted to delete path outside their folder: ${fullServerPath}`);
+      return { success: false, error: 'Unauthorized attempt to delete file. Path is outside your allowed folder directory.' };
   }
 
   try {
-    await fs.access(fullServerPath); 
-    await fs.unlink(fullServerPath); 
+    await fs.access(fullServerPath);
+    await fs.unlink(fullServerPath);
 
     revalidatePath('/');
     revalidatePath('/my-images');
-    revalidatePath('/admin/dashboard'); 
+    revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (error: any) {
     if (error.code === 'ENOENT') {
@@ -418,14 +452,13 @@ export async function deleteImage(
   }
 }
 
-
 export interface RenameImageActionState {
   success: boolean;
   error?: string;
   data?: {
-    newId: string; // userId/YYYY/MM/DD/newFilename.ext
+    newId: string; // userId/folderName/YYYY/MM/DD/newFilename.ext
     newName: string; // newFilename.ext
-    newUrl: string; // /uploads/users/userId/YYYY/MM/DD/newFilename.ext
+    newUrl: string; // /uploads/users/userId/folderName/YYYY/MM/DD/newFilename.ext
   };
 }
 
@@ -438,45 +471,43 @@ export async function renameImage(
     return { success: false, error: 'User authentication required for renaming.' };
   }
 
-  const currentImageId = formData.get('currentImageId') as string | null; // Format: "userId/YYYY/MM/DD/oldFilename.ext"
+  const currentImageId = formData.get('currentImageId') as string | null; // Format: "userId/folderName/YYYY/MM/DD/oldFilename.ext"
   const newNameWithoutExtension = formData.get('newNameWithoutExtension') as string | null;
 
   if (!currentImageId || !newNameWithoutExtension) {
     return { success: false, error: 'Missing current image ID or new name.' };
   }
 
-  const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); 
+  const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); // Leave space for prefix and extension
   if (!sanitizedNewName) {
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
 
   if (typeof currentImageId !== 'string' || currentImageId.includes('..')) {
-    console.error(`Security alert: Invalid currentImageId (contains '..' or not a string) for rename. User: ${requestingUserId}, ID: ${currentImageId}`);
-    return { success: false, error: 'Invalid current image ID format for renaming (contains ..).' };
+    return { success: false, error: 'Invalid current image ID format (contains ..).' };
   }
   const parts = currentImageId.split('/');
-   if (parts.length !== 5) { // userId, YYYY, MM, DD, oldFilename.ext
-    console.error(`Security alert: Invalid currentImageId structure. Expected 5 parts, got ${parts.length}. User: ${requestingUserId}, ID: ${currentImageId}`);
-    return { success: false, error: 'Invalid current image ID format for renaming (structure).' };
+   if (parts.length !== 6) { // userId, folderName, YYYY, MM, DD, oldFilename.ext
+    return { success: false, error: 'Invalid current image ID format (structure).' };
   }
   const imageOwnerId = parts[0];
-  const yearPart = parts[1];
-  const monthPart = parts[2];
-  const dayPart = parts[3];
-  const oldFilenameWithExt = parts[4];
+  const folderName = parts[1];
+  const yearPart = parts[2];
+  const monthPart = parts[3];
+  const dayPart = parts[4];
+  const oldFilenameWithExt = parts[5];
 
   if (requestingUserId !== imageOwnerId) {
-    console.error(`Security alert: User ${requestingUserId} attempted to rename image owned by ${imageOwnerId}. ID: ${currentImageId}`);
     return { success: false, error: 'Unauthorized: You can only rename your own images.' };
   }
-
+  if (!folderName || folderName.includes('/') || folderName.includes('\\') || folderName.includes('..')) {
+      return { success: false, error: 'Invalid image ID format (folderName).' };
+  }
   if (!/^\d{4}$/.test(yearPart) || !/^\d{2}$/.test(monthPart) || !/^\d{2}$/.test(dayPart)) {
-      console.error(`Security alert: Invalid date components in ID for rename. User: ${requestingUserId}, ID: ${currentImageId}`);
-      return { success: false, error: 'Invalid current image ID format for renaming (date parts).' };
+      return { success: false, error: 'Invalid current image ID format (date parts).' };
   }
   if (!oldFilenameWithExt || oldFilenameWithExt.includes('/') || oldFilenameWithExt.includes('\\') || oldFilenameWithExt.includes('..')) {
-      console.error(`Security alert: Invalid filename component in ID for rename. User: ${requestingUserId}, Filename: ${oldFilenameWithExt}`);
-      return { success: false, error: 'Invalid current image ID format for renaming (filename).' };
+      return { success: false, error: 'Invalid current image ID format (filename).' };
   }
 
   const extension = path.extname(oldFilenameWithExt);
@@ -484,92 +515,186 @@ export async function renameImage(
     return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
   }
 
-  const oldPrefix = oldFilenameWithExt.split('-').slice(0, 2).join('-'); 
-  let newFilenameWithExt = `${oldPrefix}-${sanitizedNewName}${extension}`;
+  // Preserve the unique prefix from the old filename if it exists and looks like our timestamp-random prefix
+  const oldPrefixMatch = oldFilenameWithExt.match(/^(\d{13}-\d{1,10})-/);
+  const oldPrefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
 
-  if (!/^\d{13}-\d{1,10}-/.test(oldPrefix + '-')) {
-      console.warn(`Old filename prefix '${oldPrefix}' does not match expected unique format. Proceeding, but uniqueness relies on original generation.`);
-      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-      newFilenameWithExt = `${uniqueSuffix}-${sanitizedNewName}${extension}`.substring(0, MAX_FILENAME_LENGTH);
-  }
-  
-  newFilenameWithExt = newFilenameWithExt.substring(0, MAX_FILENAME_LENGTH); 
+  let newFilenameWithExt = `${oldPrefix}-${sanitizedNewName}${extension}`;
+  newFilenameWithExt = newFilenameWithExt.substring(0, MAX_FILENAME_LENGTH);
 
 
   if (newFilenameWithExt === oldFilenameWithExt) {
     return { success: false, error: 'New name is the same as the old name.' };
   }
 
-  const userBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId));
+  // Base path for security check: uploads/users/userId/folderName/
+  const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
   const dateSubPath = path.join(yearPart, monthPart, dayPart);
-  const oldFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateSubPath, oldFilenameWithExt);
-  const newFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, dateSubPath, newFilenameWithExt);
+
+  const oldFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName, dateSubPath, oldFilenameWithExt);
+  const newFullPath = path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName, dateSubPath, newFilenameWithExt);
 
   const resolvedOldPath = path.resolve(oldFullPath);
   const resolvedNewPath = path.resolve(newFullPath);
 
-  const isOldPathSafe = resolvedOldPath.startsWith(userBaseDir + path.sep) || resolvedOldPath.startsWith(userBaseDir + path.win32.sep);
-  const isNewPathSafe = resolvedNewPath.startsWith(userBaseDir + path.sep) || resolvedNewPath.startsWith(userBaseDir + path.win32.sep);
+  const dateLevelBasePath = path.resolve(path.join(userFolderBaseDir, dateSubPath));
 
+  // Ensure both old and new paths are strictly within the specific YYYY/MM/DD directory
+  const isOldPathSafe = resolvedOldPath.startsWith(dateLevelBasePath + path.sep) || resolvedOldPath.startsWith(dateLevelBasePath + path.win32.sep);
+  const isNewPathSafe = resolvedNewPath.startsWith(dateLevelBasePath + path.sep) || resolvedNewPath.startsWith(dateLevelBasePath + path.win32.sep);
+  
   if (!isOldPathSafe || !isNewPathSafe) {
-    console.error(`Security alert: User ${requestingUserId} attempted to rename file with path outside their directory. Old: ${oldFullPath}, New: ${newFullPath}`);
+    console.error(`Security alert: Path outside designated folder/date directory. User: ${requestingUserId}, Old: ${oldFullPath}, New: ${newFullPath}`);
     return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
   }
 
-  try {
-    await fs.access(oldFullPath);
 
+  try {
+    await fs.access(oldFullPath); // Check if old file exists
     try {
+      // Check if new file name already exists
       await fs.access(newFullPath);
-      console.warn(`Rename conflict: Target file ${newFullPath} already exists.`);
-      return { success: false, error: `A file named "${newFilenameWithExt}" unexpectedly already exists.` };
+      // If newFullPath exists, it's a conflict
+      return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this location.` };
     } catch (e: any) {
-      if (e.code !== 'ENOENT') {
-         throw e; 
-      }
+      // If access to newFullPath throws ENOENT, it means the new file name is available, which is good.
+      // If it throws any other error, re-throw it.
+      if (e.code !== 'ENOENT') throw e;
     }
 
+    // Proceed with renaming
     await fs.rename(oldFullPath, newFullPath);
     
     const webDatePath = `${yearPart}/${monthPart}/${dayPart}`;
-    const newUrl = `/uploads/users/${requestingUserId}/${webDatePath}/${newFilenameWithExt}`;
-    const newId = `${requestingUserId}/${webDatePath}/${newFilenameWithExt}`;
+    const newUrl = `/uploads/users/${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
+    const newId = `${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
 
     revalidatePath('/');
     revalidatePath('/my-images');
     revalidatePath('/admin/dashboard');
 
-
-    return {
-      success: true,
-      data: {
-        newId,
-        newName: newFilenameWithExt,
-        newUrl,
-      },
-    };
+    return { success: true, data: { newId, newName: newFilenameWithExt, newUrl } };
   } catch (error: any) {
-    if (error.code === 'ENOENT') { 
-      return { success: false, error: 'Original file not found. It may have been deleted or moved.' };
-    }
+    if (error.code === 'ENOENT') return { success: false, error: 'Original file not found.' };
     console.error(`Failed to rename file from ${oldFullPath} to ${newFullPath}:`, error);
-    return { success: false, error: 'Failed to rename file on server. Please try again.' };
+    return { success: false, error: 'Failed to rename file on server.' };
   }
 }
 
-/**
- * Security Notes for File System Operations:
- * - User-Specific Directories: All operations are scoped to `UPLOAD_DIR_BASE_PUBLIC/userId/...`.
- * - Path Component Validation:
- *   - `userId`: Checked for `..` and `/` during directory creation. Obtained from secure session.
- *   - `datePath` (`YYYY/MM/DD`): Generated server-side. Format validated during retrieval/delete/rename.
- *   - `filename`: Sanitized on upload (regexp, length limited), includes unique prefix. Validated for traversal characters during delete/rename.
- * - Path Resolution & Canonicalization: `path.join` used for construction, `path.resolve` and `startsWith` checks confine operations strictly within the authenticated user's designated directory structure. This is a key defense against path traversal.
- * - File Extensions: Validated against `MIME_TO_EXTENSION` map and `ACCEPTED_IMAGE_TYPES`.
- * - Input Sanitization for Rename: `newNameWithoutExtension` is sanitized (regexp for allowed chars, length limited).
- * - Race Conditions: While basic checks for file existence are done (e.g., before rename, on delete error), advanced race condition handling (e.g., atomic operations if critical) is not implemented for this local FS demo.
- * - Nginx Configuration: Crucial for serving static files securely (prevent script execution, `X-Content-Type-Options: nosniff`, `client_max_body_size`).
- * - Session Management: Relies on secure JWT handling.
- * - User Authorization: Checks ensure users can only modify/delete their own images. Admin actions are separate.
- */
+// --- Folder Management Actions ---
+export interface UserFolder {
+  name: string;
+  // path: string; // Could be relative to user's upload dir, e.g., "My Documents"
+  // imageCount?: number; // Optional: for display
+  // createdAt?: number; // Optional
+}
+
+export interface FolderActionResponse {
+    success: boolean;
+    error?: string;
+    folderName?: string;
+    folders?: UserFolder[];
+}
+
+export async function createFolderAction(
+    prevState: FolderActionResponse,
+    formData: FormData
+): Promise<FolderActionResponse> {
+    const userId = await getCurrentUserIdFromSession();
+    if (!userId) {
+        return { success: false, error: 'User authentication required.' };
+    }
+
+    const newFolderName = formData.get('newFolderName') as string | null;
+    if (!newFolderName || newFolderName.trim() === "" || newFolderName === DEFAULT_FOLDER_NAME) {
+        return { success: false, error: `Folder name cannot be empty or '${DEFAULT_FOLDER_NAME}'.` };
+    }
+    if (newFolderName.includes('..') || newFolderName.includes('/') || newFolderName.includes('\\') || newFolderName.length > 100) {
+        return { success: false, error: 'Invalid characters in folder name or name too long.' };
+    }
+
+    const folderPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, newFolderName);
+    const resolvedFolderPath = path.resolve(folderPath);
+    const resolvedUserBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId));
+
+    if (!resolvedFolderPath.startsWith(resolvedUserBase + path.sep) &&
+        !resolvedFolderPath.startsWith(resolvedUserBase + path.win32.sep)) {
+        console.error(`Security Alert: Attempt to create folder outside user's directory. User: ${userId}, Path: ${folderPath}`);
+        return { success: false, error: "Invalid folder path." };
+    }
+    
+    // Check if the main user directory exists, if not create it
+    try {
+      await fs.access(resolvedUserBase);
+    } catch (error: any) {
+        if (error.code === 'ENOENT') {
+            try {
+                await fs.mkdir(resolvedUserBase, { recursive: true });
+            } catch (mkdirError) {
+                console.error(`Failed to create base user directory ${resolvedUserBase}:`, mkdirError);
+                return { success: false, error: 'Failed to prepare user storage on server.' };
+            }
+        } else {
+            console.error(`Error accessing base user directory ${resolvedUserBase}:`, error);
+            return { success: false, error: 'Server error checking user storage.' };
+        }
+    }
+
+
+    try {
+        await fs.mkdir(folderPath, { recursive: false }); 
+        revalidatePath('/my-images');
+        return { success: true, folderName: newFolderName };
+    } catch (error: any) {
+        if (error.code === 'EEXIST') {
+            return { success: false, error: `Folder "${newFolderName}" already exists.` };
+        }
+        console.error(`Failed to create folder ${folderPath}:`, error);
+        return { success: false, error: 'Failed to create folder on server.' };
+    }
+}
+
+export async function listUserFolders(userIdFromSession?: string): Promise<UserFolder[]> {
+    const userId = userIdFromSession || await getCurrentUserIdFromSession();
+    if (!userId) {
+        return [{ name: DEFAULT_FOLDER_NAME }]; // Always include default if no user/logged out
+    }
+    const userUploadsPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId);
+    const resolvedUserUploadsPath = path.resolve(userUploadsPath);
+    const resolvedUploadsBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
+
+    if (!resolvedUserUploadsPath.startsWith(resolvedUploadsBase + path.sep) &&
+        !resolvedUserUploadsPath.startsWith(resolvedUploadsBase + path.win32.sep)) {
+        console.error(`Security Alert: Attempt to list folders outside base uploads directory. User: ${userId}`);
+        return [{ name: DEFAULT_FOLDER_NAME }]; // Fallback to default on security issue
+    }
+    
+    let folders: UserFolder[] = [];
+    try {
+        await fs.access(userUploadsPath); // Check if user's base upload dir exists
+        const entries = await fs.readdir(userUploadsPath, { withFileTypes: true });
+        folders = entries
+            .filter(dirent => dirent.isDirectory() && dirent.name !== '.' && dirent.name !== '..')
+            .map(dirent => ({ name: dirent.name }));
+        
+    } catch (error: any) {
+        if (error.code === 'ENOENT') { // User directory doesn't exist yet
+            // No user-created folders, so only the default exists conceptually
+        } else {
+            console.error(`Error listing folders for user ${userId}:`, error);
+            // On other errors, return default to be safe
+        }
+    }
+
+    // Ensure DEFAULT_FOLDER_NAME is always in the list, and at the beginning if it doesn't exist physically
+    if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
+       folders.unshift({ name: DEFAULT_FOLDER_NAME });
+    }
+
+    return folders.sort((a,b) => {
+        if (a.name === DEFAULT_FOLDER_NAME) return -1; // Keep default first
+        if (b.name === DEFAULT_FOLDER_NAME) return 1;
+        return a.name.localeCompare(b.name);
+    });
+}
 
