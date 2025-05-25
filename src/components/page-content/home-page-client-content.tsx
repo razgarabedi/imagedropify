@@ -118,7 +118,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
     const newImage: DisplayImage = {
-      id: imageFile.id,
+      id: imageFile.id, // Ensure this ID is valid and unique from the server action
       name: imageFile.name,
       previewSrc: imageFile.url,
       url: imageFile.url,
@@ -129,8 +129,9 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     if (newImage.folderName === DEFAULT_FOLDER_NAME) {
         setUploadedImages((prevImages) => {
             const updatedImages = [newImage, ...prevImages];
+            // Filter for uniqueness based on ID
             const uniqueImages = updatedImages.filter((img, index, self) =>
-                index === self.findIndex((t) => t.id === img.id)
+                img.id && index === self.findIndex((t) => t.id === img.id)
             );
             return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
         });
@@ -242,7 +243,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             {isLoadingInitialImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={index} className="shadow-lg">
+                  <Card key={`initial-skeleton-${index}`} className="shadow-lg"> {/* Ensured unique key prefix */}
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -256,9 +257,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {uploadedImages.map((image) => (
+                {uploadedImages
+                  .filter(image => image && typeof image.id === 'string' && image.id.trim() !== '') // Filter for valid IDs
+                  .map((image) => (
                   <ImagePreviewCard
-                    key={image.id}
+                    key={image.id} // This key should now always be a valid, unique string
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
@@ -284,7 +287,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                    <Card key={index} className="shadow-lg">
+                    <Card key={`authload-skeleton-${index}`} className="shadow-lg"> {/* Ensured unique key prefix */}
                         <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                         <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                         <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -304,3 +307,4 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     </div>
   );
 }
+
