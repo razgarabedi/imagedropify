@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { stat } from 'fs/promises';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers'; // Import cookies
 import { getCurrentUserIdFromSession, findUserById } from '@/lib/auth/service';
 import { getMaxUploadSizeMB as getGlobalMaxUploadSizeMB } from '@/lib/settingsService';
 import type { User } from '@/lib/auth/types';
@@ -90,7 +91,13 @@ export async function uploadImage(
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-      return { success: false, error: 'User authentication required for upload.' };
+      const cookieStore = await cookies();
+      const tokenExists = cookieStore.has('session_token');
+      if (!tokenExists) {
+          return { success: false, error: 'Upload failed: Session token not found. Please log in.' };
+      } else {
+          return { success: false, error: 'Upload failed: Session token invalid or expired. Please log in again.' };
+      }
     }
 
     const user = await findUserById(userId) as User | undefined;
@@ -386,7 +393,13 @@ export async function deleteImage(
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    return { success: false, error: 'User authentication required for deletion.' };
+     const cookieStore = await cookies();
+     const tokenExists = cookieStore.has('session_token');
+     if (!tokenExists) {
+         return { success: false, error: 'Delete failed: Session token not found. Please log in.' };
+     } else {
+         return { success: false, error: 'Delete failed: Session token invalid or expired. Please log in again.' };
+     }
   }
 
   if (typeof imageId !== 'string' || imageId.includes('..')) {
@@ -468,7 +481,13 @@ export async function renameImage(
 ): Promise<RenameImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    return { success: false, error: 'User authentication required for renaming.' };
+    const cookieStore = await cookies();
+    const tokenExists = cookieStore.has('session_token');
+    if (!tokenExists) {
+        return { success: false, error: 'Rename failed: Session token not found. Please log in.' };
+    } else {
+        return { success: false, error: 'Rename failed: Session token invalid or expired. Please log in again.' };
+    }
   }
 
   const currentImageId = formData.get('currentImageId') as string | null; // Format: "userId/folderName/YYYY/MM/DD/oldFilename.ext"
@@ -602,7 +621,13 @@ export async function createFolderAction(
 ): Promise<FolderActionResponse> {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-        return { success: false, error: 'User authentication required.' };
+        const cookieStore = await cookies();
+        const tokenExists = cookieStore.has('session_token');
+        if (!tokenExists) {
+            return { success: false, error: 'Folder creation failed: Session token not found. Please log in.' };
+        } else {
+            return { success: false, error: 'Folder creation failed: Session token invalid or expired. Please log in again.' };
+        }
     }
 
     const newFolderName = formData.get('newFolderName') as string | null;
@@ -687,9 +712,11 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
     }
 
     // Ensure DEFAULT_FOLDER_NAME is always in the list, and at the beginning if it doesn't exist physically
+    // (even if it doesn't physically exist as a dir yet, it's a valid target for uploads)
     if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
        folders.unshift({ name: DEFAULT_FOLDER_NAME });
     }
+
 
     return folders.sort((a,b) => {
         if (a.name === DEFAULT_FOLDER_NAME) return -1; // Keep default first
