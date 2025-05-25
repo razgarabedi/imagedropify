@@ -156,9 +156,9 @@ sudo chown -R node_user:node_user public/uploads # Node user owns the uploads st
 # The -R flag applies recursively to existing files/dirs.
 # The -dR flag sets default ACLs for NEW files/dirs created within public/uploads. THIS IS CRUCIAL.
 sudo setfacl -R -m u:node_user:rwx public/uploads
-sudo setfacl -R -m u:www-data:rx public/uploads
+sudo setfacl -R -m u:www-data:rx public/uploads # Grant www-data read/execute
 sudo setfacl -dR -m u:node_user:rwx public/uploads  # Default for new items by node_user
-sudo setfacl -dR -m u:www-data:rx public/uploads   # Default for new items (ensures www-data can read)
+sudo setfacl -dR -m u:www-data:rx public/uploads   # Default for new items (ensures www-data can read/execute)
 
 # If ACLs are not used, you might need to add www-data to node_user's group
 # or manage permissions more manually, which can be complex and error-prone.
@@ -184,9 +184,9 @@ sudo chmod o+x /var/www/imagedrop/public # Allow 'other' to traverse into public
 ```
 **Important Notes on Permissions:**
 *   Replace `node_user` with the actual username that will run the `pm2` process for your Next.js app.
-*   **ACLs are strongly recommended.** The `setfacl -dR` commands are critical for ensuring `www-data` automatically gets the necessary read/execute permissions on files and directories newly created by `node_user` within `public/uploads`.
-*   If not using ACLs, managing group permissions and `setgid` bits (`chmod g+s`) can be complex. ACLs provide more granular and predictable control.
-*   The `ensureUploadDirsExist` function in the app code *attempts* to create directories. The base permissions and ACLs set here are crucial for its success and for Nginx's subsequent access.
+*   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` command is critical for ensuring `www-data` automatically gets the necessary read/execute permissions on files and directories newly created by `node_user` within `public/uploads`.
+*   The application code now attempts to set permissions `0o755` for directories and `0o644` for files during creation. This can act as a fallback if ACLs are not perfectly set up, but ACLs are preferred for robust permission inheritance.
+*   If issues persist, use `namei -l /var/www/imagedrop/public/uploads/users/<userId>/.../image.png` immediately after an upload to trace permissions for each component of the path. `www-data` needs `x` on all directories and `r` on the file.
 
 ### 8. Start Application with PM2
 
@@ -357,7 +357,7 @@ sudo certbot renew --dry-run
             *   Execute (`x`) permission on ALL parent directories leading to the image file (e.g., `public`, `uploads`, `users`, `<userId>`, `<folderName>`, `YYYY`, `MM`, `DD`).
             *   **Action**:
                 *   If using ACLs (recommended): Ensure `sudo setfacl -dR -m u:www-data:rx public/uploads` was run correctly. This sets *default* permissions so newly created files/folders inherit `rx` for `www-data`.
-                *   Verify permissions immediately after upload:
+                *   Verify permissions immediately after upload fails for `next/image` (even if direct URL works):
                     ```bash
                     # Replace with the actual path to your newly uploaded image
                     namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
@@ -366,7 +366,7 @@ sudo certbot renew --dry-run
                     getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/
                     # ...and so on for parent directories up to public/uploads
                     ```
-                    Look for `r-x` for `www-data` on directories and `r--` on the file.
+                    Look for `r-x` for `www-data` on directories and `r--` on the file. If these are not immediately correct, the default ACLs (`setfacl -dR`) are not working as expected.
         2.  **Nginx Configuration Not Loaded**:
             *   **Action**: Always run `sudo nginx -t` to test your Nginx configuration for syntax errors. Then, `sudo systemctl reload nginx`. If issues persist, try `sudo systemctl restart nginx` as it's a more forceful way to apply changes.
         3.  **Incorrect Nginx `alias` Path**:
@@ -377,8 +377,11 @@ sudo certbot renew --dry-run
         *   `tail -f /var/log/nginx/imagedrop.access.log`
         *   If Nginx logs a 404 error for the direct image URL, it means Nginx itself cannot find or access the file (permission/path issue).
         *   If the access log shows the image URL request getting a 200 status but the browser still shows an error, or if the error log shows the request being handled by the Next.js proxy, it confirms Nginx isn't serving the static file.
+    *   **Specific Case: Direct URL works, `next/image` fails initially**:
+        *   If typing the image URL directly into the browser *immediately after upload* works, but `next/image` on the page shows the error, this could indicate that the Next.js server (when `next/image` attempts to optimize or fetch the image *itself*) is encountering the issue with Nginx not serving the new file correctly to *it*. The same Nginx caching/permission issues apply, but the "client" for Nginx in this internal request is your Next.js server process.
+        *   Ensure the `node_user` (running PM2) also has network access to reach Nginx if it tries to fetch the image via its public URL (though typically `next/image` for local files might not do this, it's a consideration).
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit`.
-    *   **PM2/Next.js Logs:** Check `pm2 logs imagedrop` for any application-level errors during upload, though the "received text/html" error points away from an app crash.
+    *   **PM2/Next.js Logs:** Check `pm2 logs imagedrop` for any application-level errors during upload.
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or not running. Check `pm2 status` and `pm2 logs imagedrop`.
 
 ### 14. Updating the Application
