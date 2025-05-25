@@ -117,30 +117,40 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
   }, [needsImageFetch, authLoading, fetchLatestUserImages]);
 
   const handleImageUpload = useCallback((imageFile: ClientUploadedImageFile) => {
-    const newImage: DisplayImage = {
-      id: imageFile.id, // Ensure this ID is valid and unique from the server action
-      name: imageFile.name,
-      previewSrc: imageFile.url,
-      url: imageFile.url,
-      uploaderId: imageFile.userId,
-      folderName: imageFile.folderName,
-    };
-
-    if (newImage.folderName === DEFAULT_FOLDER_NAME) {
-        setUploadedImages((prevImages) => {
-            const updatedImages = [newImage, ...prevImages];
-            // Filter for uniqueness based on ID
-            const uniqueImages = updatedImages.filter((img, index, self) =>
-                img.id && index === self.findIndex((t) => t.id === img.id)
-            );
-            return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
-        });
+    // Optimistic update for the "Latest Images" section if the upload was to DEFAULT_FOLDER_NAME
+    if (imageFile.folderName === DEFAULT_FOLDER_NAME) {
+      const newImage: DisplayImage = {
+        id: imageFile.id, 
+        name: imageFile.name,
+        previewSrc: imageFile.url,
+        url: imageFile.url,
+        uploaderId: imageFile.userId,
+        folderName: imageFile.folderName,
+      };
+      setUploadedImages((prevImages) => {
+          const updatedImages = [newImage, ...prevImages];
+          const uniqueImages = updatedImages.filter((img, index, self) =>
+              img.id && index === self.findIndex((t) => t.id === img.id)
+          );
+          return uniqueImages.slice(0, LATEST_IMAGES_COUNT);
+      });
     }
-  }, []);
+    
+    // Regardless of which folder was uploaded to from the homepage,
+    // re-fetch the "Latest Images" (which are from DEFAULT_FOLDER_NAME)
+    // to ensure this section is up-to-date after the server action's revalidatePath.
+    if (user) {
+      fetchLatestUserImages();
+    }
+  }, [user, fetchLatestUserImages]); // Added user and fetchLatestUserImages to dependencies
 
   const handleImageDelete = useCallback((deletedImageId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageId));
-  }, []);
+    // Optionally, you could re-fetch latest images here too if deletion affects the latest list
+    if (user) {
+        fetchLatestUserImages();
+    }
+  }, [user, fetchLatestUserImages]);
 
   const handleImageRename = useCallback((oldImageId: string, newImageId: string, newName: string, newUrl: string) => {
     setUploadedImages((prevImages) =>
@@ -150,7 +160,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
           : image
       )
     );
-  }, []);
+    // Optionally, re-fetch if renaming could affect the "latest" sort order or content
+     if (user) {
+        fetchLatestUserImages();
+    }
+  }, [user, fetchLatestUserImages]);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -243,7 +257,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             {isLoadingInitialImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={`initial-skeleton-${index}`} className="shadow-lg"> {/* Ensured unique key prefix */}
+                  <Card key={`initial-skeleton-${index}-${Math.random()}`} className="shadow-lg"> {/* Ensured unique key prefix */}
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -258,10 +272,10 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages
-                  .filter(image => image && typeof image.id === 'string' && image.id.trim() !== '') // Filter for valid IDs
+                  .filter(image => image && typeof image.id === 'string' && image.id.trim() !== '') 
                   .map((image) => (
                   <ImagePreviewCard
-                    key={image.id} // This key should now always be a valid, unique string
+                    key={`${image.id}-${Math.random()}`} 
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
@@ -287,7 +301,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                    <Card key={`authload-skeleton-${index}`} className="shadow-lg"> {/* Ensured unique key prefix */}
+                    <Card key={`authload-skeleton-${index}-${Math.random()}`} className="shadow-lg"> {/* Ensured unique key prefix */}
                         <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                         <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                         <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -307,4 +321,3 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     </div>
   );
 }
-
