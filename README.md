@@ -37,6 +37,12 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 *   **Responsive Design:** UI adapts to different screen sizes.
 *   **Dark/Light Theme:** User-selectable theme.
 
+## Deployment Options
+
+You can choose to deploy ImageDrop using either Nginx or Apache as your web server. Both will use PM2 to manage the Next.js application process.
+
+---
+
 ## Deployment on Ubuntu with Nginx & PM2
 
 This guide outlines deploying ImageDrop on an Ubuntu server (e.g., 20.04, 22.04 LTS) using Nginx as a reverse proxy and PM2 as a process manager.
@@ -201,7 +207,7 @@ pm2 start npm --name "imagedrop" -- run start
 # Optional: Configure PM2 to start on server reboot
 pm2 startup systemd
 # Follow the command output by pm2 startup (usually requires running a command with sudo)
-# Example: sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u node_user --hp /home/node_user 
+# Example: sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u node_user --hp /home/node_user
 # (Replace node_user and home path with your actual user and their home directory)
 
 # Save current PM2 process list
@@ -261,12 +267,10 @@ server {
         # These settings tell browsers and proxies to always revalidate.
         expires -1; # Equivalent to 'no-cache' for Nginx's expires directive
         add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0";
-        
+
         # Disable Nginx's own file descriptor/metadata cache for this location.
         # This helps Nginx pick up newly written files immediately.
-        open_file_cache off; 
-        
-        # Disable sendfile for this location; can help with serving recently modified files
+        open_file_cache off;
         sendfile off;
 
         # Security: Only allow specific image file extensions to be served.
@@ -274,19 +278,16 @@ server {
         location ~* \.(jpg|jpeg|png|gif|webp)$ {
             # Nginx will serve the file if it exists due to the alias.
             # try_files ensures Nginx serves the file or returns 404, not passing to backend.
-            try_files $uri $uri/ =404; 
+            try_files $uri $uri/ =404;
         }
 
         # Deny access to any other file or directory within /uploads/ not matching above.
         # This will catch requests for .env, .json, scripts, etc.
-        # Note: A request for a non-existent image that matches the extensions above
-        # will result in a 404 from the try_files. A request for a non-image file (e.g., /uploads/test.txt)
-        # will fall through here and be denied.
         location ~ ^/uploads/ { # Catches anything under /uploads/ not handled by the image extension rule
             deny all;
             return 403; # Or 404 if you prefer to hide its existence
         }
-        
+
         # Prevent MIME type sniffing
         add_header X-Content-Type-Options "nosniff";
     }
@@ -314,7 +315,7 @@ server {
 ```
 **After saving the Nginx configuration, always test it and then reload Nginx:**
 ```bash
-sudo nginx -t 
+sudo nginx -t
 sudo systemctl reload nginx
 # If reload doesn't resolve issues, a restart might be needed: sudo systemctl restart nginx
 ```
@@ -325,7 +326,7 @@ sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/ # Only
 sudo systemctl restart nginx # Use restart if it's the first time or major changes
 ```
 
-### 10. Configure Firewall (UFW)
+### 10. Configure Firewall (UFW) for Nginx
 
 ```bash
 sudo ufw allow OpenSSH
@@ -335,7 +336,7 @@ sudo ufw enable
 sudo ufw status
 ```
 
-### 11. (Optional) Secure with SSL using Certbot
+### 11. (Optional) Secure Nginx with SSL using Certbot
 
 If you have a domain, enable HTTPS:
 
@@ -348,7 +349,7 @@ sudo systemctl restart nginx # Certbot usually reloads Nginx, but restart for go
 sudo certbot renew --dry-run
 ```
 
-### 12. Security Considerations Summary
+### 12. Security Considerations Summary (Nginx)
 
 *   **`JWT_SECRET_KEY`**: Must be strong and unique.
 *   **`users.json` Passwords**: **PLAIN TEXT - INSECURE**. For demo/trusted use only.
@@ -359,7 +360,7 @@ sudo certbot renew --dry-run
 *   **Input Validation**: Server actions use Zod for input validation.
 *   **HTTPS**: Use in production (Step 11).
 
-### 13. Troubleshooting
+### 13. Troubleshooting (Nginx)
 
 *   **Login Fails:** Check `users.json` status (must be `approved`). Verify `JWT_SECRET_KEY`. Check `pm2 logs imagedrop`.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image for ... received text/html")**:
@@ -400,7 +401,7 @@ sudo certbot renew --dry-run
     *   **PM2/Next.js Logs:** Check `pm2 logs imagedrop` for any application-level errors during upload or image processing.
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or not running. Check `pm2 status` and `pm2 logs imagedrop`.
 
-### 14. Updating the Application
+### 14. Updating the Application (Nginx)
 
 1.  `cd /var/www/imagedrop`
 2.  `git pull origin main` (or your branch)
@@ -409,7 +410,164 @@ sudo certbot renew --dry-run
 5.  `pm2 restart imagedrop`
 6.  If Nginx config changed: `sudo nginx -t && sudo systemctl reload nginx` (or `restart` if significant changes).
 
-### 15. Resetting Data (Development/Testing Only)
+---
+
+## Deployment on Ubuntu with Apache & PM2
+
+This guide outlines deploying ImageDrop on an Ubuntu server (e.g., 20.04, 22.04 LTS) using Apache as a reverse proxy and PM2 as a process manager. Steps 1-8 (Prerequisites, Node/PM2 install, App Clone, Env Vars, Build, Admin User, File Permissions, PM2 Start) are identical to the Nginx setup.
+
+**Follow Steps 1-8 from the Nginx section above first.**
+
+### 9. Install and Configure Apache
+
+```bash
+sudo apt update
+sudo apt install -y apache2
+```
+
+Enable necessary Apache modules:
+```bash
+sudo a2enmod proxy proxy_http headers rewrite ssl # Enable ssl if you plan to use it
+sudo systemctl restart apache2
+```
+
+Create an Apache VirtualHost configuration file:
+```bash
+sudo nano /etc/apache2/sites-available/imagedrop.conf
+```
+
+Paste the following configuration. Replace `your_domain.com` with your actual domain or server IP. Adjust `/var/www/imagedrop` if your application path is different. The `LimitRequestBody` should match or exceed the Next.js `bodySizeLimit` (10MB = 10485760 bytes).
+
+```apache
+<VirtualHost *:80>
+    ServerName your_domain.com
+    # ServerAlias www.your_domain.com # Optional
+
+    ErrorLog ${APACHE_LOG_DIR}/imagedrop_error.log
+    CustomLog ${APACHE_LOG_DIR}/imagedrop_access.log combined
+
+    # Max body size for uploads (e.g., 10MB). 10 * 1024 * 1024 = 10485760 bytes.
+    LimitRequestBody 10485760
+
+    # Proxy settings
+    ProxyPreserveHost On
+    ProxyRequests Off # Crucial for security when reverse proxying
+    KeepAlive On
+
+    <Proxy *>
+        Require all granted
+    </Proxy>
+
+    # Serve uploaded images directly from the filesystem
+    Alias /uploads/ /var/www/imagedrop/public/uploads/
+    <Directory /var/www/imagedrop/public/uploads/>
+        Options FollowSymLinks
+        AllowOverride None
+        Require all denied # Deny access by default
+
+        # Allow only specific image file extensions (case-insensitive)
+        <FilesMatch "\.(?i:jpg|jpeg|png|gif|webp)$">
+            Require all granted
+        </FilesMatch>
+
+        # Cache-Control headers to ensure freshness for uploaded content
+        Header set Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0"
+        
+        # Prevent MIME type sniffing
+        Header set X-Content-Type-Options "nosniff"
+    </Directory>
+
+    # Efficiently serve Next.js static assets (versioned, can be cached aggressively by client)
+    # For Apache, often Next.js handles its own static assets well through the proxy.
+    # If you experience issues or want Apache to handle them, you might need a more specific Alias for /_next/static.
+    # However, proxying them is usually fine.
+    ProxyPass /_next/static/ http://localhost:3000/_next/static/
+    ProxyPassReverse /_next/static/ http://localhost:3000/_next/static/
+    <Location /_next/static/>
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </Location>
+
+    # Proxy all other requests to the Next.js app
+    ProxyPass / http://localhost:3000/
+    ProxyPassReverse / http://localhost:3000/
+
+    # Optional: HTTP to HTTPS redirect (if SSL is configured later)
+    # RewriteEngine On
+    # RewriteCond %{HTTPS} off
+    # RewriteRule ^/?(.*) https://%{SERVER_NAME}/$1 [R=301,L]
+</VirtualHost>
+```
+
+Enable the new site configuration and restart Apache:
+```bash
+sudo a2ensite imagedrop.conf
+sudo systemctl reload apache2 # Try reload first
+# If reload doesn't work or for major changes:
+# sudo systemctl restart apache2 
+```
+**Test your Apache configuration:** `sudo apache2ctl configtest`
+
+### 10. Configure Firewall (UFW) for Apache
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Apache Full' # Allows both HTTP (80) and HTTPS (443)
+# Or, if only HTTP for now: sudo ufw allow 'Apache'
+sudo ufw enable
+sudo ufw status
+```
+
+### 11. (Optional) Secure Apache with SSL using Certbot
+
+If you have a domain, enable HTTPS:
+```bash
+sudo apt install -y certbot python3-certbot-apache
+sudo certbot --apache -d your_domain.com # Replace with your domain(s)
+# Follow prompts (email, terms, redirect option - choose redirect to HTTPS)
+# Certbot should automatically update your Apache config for SSL.
+sudo systemctl restart apache2 # Restart Apache to apply SSL changes
+# Test renewal
+sudo certbot renew --dry-run
+```
+If Certbot configures SSL, your `/etc/apache2/sites-available/imagedrop-le-ssl.conf` (or similar) will be created and enabled.
+
+### 12. Security Considerations Summary (Apache)
+
+*   **`JWT_SECRET_KEY`**: Must be strong and unique.
+*   **`users.json` Passwords**: **PLAIN TEXT - INSECURE**.
+*   **File Permissions**: Critical. `node_user` needs write access for uploads and JSON files. Apache's user (`www-data`) needs read access to images in `public/uploads/...` and execute access on directories in the path. **Default ACLs (`setfacl -dR`) are vital (see Nginx Step 7).**
+*   **Apache Configuration**:
+    *   `LimitRequestBody` matches Next.js `bodySizeLimit`.
+    *   `/uploads/` Alias and Directory block serve images correctly, deny non-image files, and have appropriate caching headers. **Always run `sudo apache2ctl configtest && sudo systemctl reload apache2` (or `restart`) after Apache config changes.**
+*   **Input Validation**: Server actions use Zod.
+*   **HTTPS**: Use in production (Step 11).
+
+### 13. Troubleshooting (Apache)
+
+*   **Login Fails:** Check `users.json`, `JWT_SECRET_KEY`, `pm2 logs imagedrop`.
+*   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
+    *   This typically means Apache is not serving the image file from `/uploads/` directly, and the request is being proxied to Next.js.
+    *   **Permissions for `www-data`**: Apache user (`www-data`) must have read (`r`) on the image and execute (`x`) on all parent directories. Verify with `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/.../image.png`. Check ACLs with `getfacl`.
+    *   **Apache Configuration**:
+        *   Ensure `Alias /uploads/ /var/www/imagedrop/public/uploads/` is correct.
+        *   Ensure `<Directory /var/www/imagedrop/public/uploads/>` block is correctly configured with `Require all denied` and specific `FilesMatch` for images.
+        *   Test config with `sudo apache2ctl configtest` and reload/restart Apache.
+    *   **Apache Logs**: Check `/var/log/apache2/imagedrop_error.log` and `access.log`.
+    *   **PM2/Next.js Logs:** `pm2 logs imagedrop`.
+*   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop`.
+
+### 14. Updating the Application (Apache)
+
+1.  `cd /var/www/imagedrop`
+2.  `git pull origin main` (or your branch)
+3.  `npm install` (if dependencies changed)
+4.  `npm run build`
+5.  `pm2 restart imagedrop`
+6.  If Apache config changed: `sudo apache2ctl configtest && sudo systemctl reload apache2` (or `restart`).
+
+---
+
+## Resetting Data (Development/Testing Only)
 
 **WARNING: This deletes all users, settings, shares, and uploaded images.**
 
@@ -420,4 +578,6 @@ sudo certbot renew --dry-run
 5.  `pm2 start imagedrop`
     *   The next user to sign up will become the admin. Default settings will be applied.
 
-Your ImageDrop application should now be running!
+Your ImageDrop application should now be running with your chosen web server!
+
+    
