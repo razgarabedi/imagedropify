@@ -23,6 +23,7 @@ import { AuthButton } from '@/components/auth-button';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label'; // Added import for Label
 import { Separator } from '@/components/ui/separator';
 import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
