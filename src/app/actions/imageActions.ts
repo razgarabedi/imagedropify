@@ -14,7 +14,8 @@ import {
     DEFAULT_FOLDER_NAME, 
     MAX_FILENAME_LENGTH,
     ACCEPTED_IMAGE_TYPES,
-    MIME_TO_EXTENSION
+    MIME_TO_EXTENSION,
+    POST_UPLOAD_DELAY_MS
 } from '@/lib/imageConfig';
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
@@ -58,7 +59,6 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
 
   try {
     // Explicitly set mode 0o755 (rwxr-xr-x) for created directories.
-    // This ensures owner (node_user) has rwx, and group/others have rx (read/traverse).
     await fs.mkdir(fullFolderPath, { recursive: true, mode: 0o755 });
   } catch (error) {
     console.error('CRITICAL: Failed to create user-specific folder upload directory structure:', fullFolderPath, error);
@@ -90,7 +90,7 @@ export async function uploadImage(
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-      const cookieStore = await cookies();
+      const cookieStore = await cookies(); // Await cookies() before using it
       const tokenExists = cookieStore.has('session_token');
       if (!tokenExists) {
           return { success: false, error: 'Upload failed: Session token not found. Please log in.' };
@@ -103,8 +103,9 @@ export async function uploadImage(
     if (!user) {
         return { success: false, error: 'User not found.' };
     }
-    if (user.status !== 'approved') {
-       return { success: false, error: `Account status is '${user.status}'. Uploads require 'approved' status.` };
+    // Check against capitalized status from Prisma enum
+    if (user.status !== 'Approved') { 
+       return { success: false, error: `Account status is '${user.status}'. Uploads require 'Approved' status.` };
     }
 
     const folderNameInput = formData.get('folderName') as string | null;
@@ -126,7 +127,7 @@ export async function uploadImage(
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
     const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
     const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
-                                ? userMaxSingleUploadSizeMB
+                                ? userMaxSingleUploadMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -181,12 +182,13 @@ export async function uploadImage(
     }
 
     try {
-      // Explicitly set mode 0o644 (rw-r--r--) for the created file.
-      // This ensures owner (node_user) has rw, and group/others have r (read).
       await fs.writeFile(filePath, buffer, { mode: 0o644 });
       
+      if (POST_UPLOAD_DELAY_MS > 0) {
+        await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
+      }
+      
       const webDatePath = datePathForUrl.split(path.sep).join('/');
-      // URL and ID now include targetFolderName
       const imageUrl = `/uploads/users/${userId}/${targetFolderName}/${webDatePath}/${filename}`;
       const imageId = `${userId}/${targetFolderName}/${webDatePath}/${filename}`;
 
@@ -352,9 +354,6 @@ export async function getUserImages(userIdFromSession?: string, limit?: number, 
   } // End folder loop
 
   allImages.sort((a, b) => b.ctime - a.ctime);
-  // Apply limit only if fetching for a specific folder OR globally (if targetFolderName is null).
-  // If targetFolderName is null, the limit applies to the grand total after iterating all folders.
-  // If targetFolderName is specified, the limit applies to that folder's content.
   if (limit) { 
       return allImages.slice(0, limit);
   }
@@ -377,7 +376,6 @@ export async function countUserImages(userId: string, targetFolderName?: string 
     console.error('Invalid User ID for counting images:', userId);
     return 0;
   }
-  // If targetFolderName is null, count across all folders. If specified, count in that folder.
   const userImages = await getUserImages(userId, undefined, targetFolderName);
   return userImages.length;
 }
@@ -387,14 +385,13 @@ export interface DeleteImageActionState {
     error?: string;
 }
 
-// imageId is now format: "userId/folderName/YYYY/MM/DD/filename.ext"
 export async function deleteImage(
   prevState: DeleteImageActionState,
   imageId: string
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-     const cookieStore = await cookies();
+     const cookieStore = await cookies(); // Await cookies() before using it
      const tokenExists = cookieStore.has('session_token');
      if (!tokenExists) {
          return { success: false, error: 'Delete failed: Session token not found. Please log in.' };
@@ -409,7 +406,7 @@ export async function deleteImage(
   }
 
   const parts = imageId.split('/');
-  if (parts.length !== 6) { // userId, folderName, YYYY, MM, DD, filename
+  if (parts.length !== 6) { 
     console.error(`Security alert: Invalid imageId structure. Expected 6 parts, got ${parts.length}. User: ${requestingUserId}, ID: ${imageId}`);
     return { success: false, error: 'Invalid image ID format (structure).' };
   }
@@ -439,7 +436,6 @@ export async function deleteImage(
   }
 
   const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageOwnerId, folderName, yearPart, monthPart, dayPart, filename);
-  // Security check base path: uploads/users/userId/folderName/
   const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
   const resolvedFullPath = path.resolve(fullServerPath);
 
@@ -470,9 +466,9 @@ export interface RenameImageActionState {
   success: boolean;
   error?: string;
   data?: {
-    newId: string; // userId/folderName/YYYY/MM/DD/newFilename.ext
-    newName: string; // newFilename.ext
-    newUrl: string; // /uploads/users/userId/folderName/YYYY/MM/DD/newFilename.ext
+    newId: string; 
+    newName: string; 
+    newUrl: string; 
   };
 }
 
@@ -482,7 +478,7 @@ export async function renameImage(
 ): Promise<RenameImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    const cookieStore = await cookies();
+    const cookieStore = await cookies(); // Await cookies() before using it
     const tokenExists = cookieStore.has('session_token');
     if (!tokenExists) {
         return { success: false, error: 'Rename failed: Session token not found. Please log in.' };
@@ -491,14 +487,14 @@ export async function renameImage(
     }
   }
 
-  const currentImageId = formData.get('currentImageId') as string | null; // Format: "userId/folderName/YYYY/MM/DD/oldFilename.ext"
+  const currentImageId = formData.get('currentImageId') as string | null; 
   const newNameWithoutExtension = formData.get('newNameWithoutExtension') as string | null;
 
   if (!currentImageId || !newNameWithoutExtension) {
     return { success: false, error: 'Missing current image ID or new name.' };
   }
 
-  const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); // Leave space for prefix and extension
+  const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); 
   if (!sanitizedNewName) {
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
@@ -507,7 +503,7 @@ export async function renameImage(
     return { success: false, error: 'Invalid current image ID format (contains ..).' };
   }
   const parts = currentImageId.split('/');
-   if (parts.length !== 6) { // userId, folderName, YYYY, MM, DD, oldFilename.ext
+   if (parts.length !== 6) { 
     return { success: false, error: 'Invalid current image ID format (structure).' };
   }
   const imageOwnerId = parts[0];
@@ -535,7 +531,6 @@ export async function renameImage(
     return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
   }
 
-  // Preserve the unique prefix from the old filename if it exists and looks like our timestamp-random prefix
   const oldPrefixMatch = oldFilenameWithExt.match(/^(\d{13}-\d{1,10})-/);
   const oldPrefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
 
@@ -547,7 +542,6 @@ export async function renameImage(
     return { success: false, error: 'New name is the same as the old name.' };
   }
 
-  // Base path for security check: uploads/users/userId/folderName/
   const userFolderBaseDir = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, requestingUserId, folderName));
   const dateSubPath = path.join(yearPart, monthPart, dayPart);
 
@@ -559,7 +553,6 @@ export async function renameImage(
 
   const dateLevelBasePath = path.resolve(path.join(userFolderBaseDir, dateSubPath));
 
-  // Ensure both old and new paths are strictly within the specific YYYY/MM/DD directory
   const isOldPathSafe = resolvedOldPath.startsWith(dateLevelBasePath + path.sep) || resolvedOldPath.startsWith(dateLevelBasePath + path.win32.sep);
   const isNewPathSafe = resolvedNewPath.startsWith(dateLevelBasePath + path.sep) || resolvedNewPath.startsWith(dateLevelBasePath + path.win32.sep);
   
@@ -570,21 +563,20 @@ export async function renameImage(
 
 
   try {
-    await fs.access(oldFullPath); // Check if old file exists
+    await fs.access(oldFullPath); 
     try {
-      // Check if new file name already exists
       await fs.access(newFullPath);
-      // If newFullPath exists, it's a conflict
       return { success: false, error: `A file named "${newFilenameWithExt}" already exists in this location.` };
     } catch (e: any) {
-      // If access to newFullPath throws ENOENT, it means the new file name is available, which is good.
-      // If it throws any other error, re-throw it.
       if (e.code !== 'ENOENT') throw e;
     }
 
-    // Proceed with renaming
     await fs.rename(oldFullPath, newFullPath);
     
+    if (POST_UPLOAD_DELAY_MS > 0) { // Also add delay after rename
+        await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
+    }
+
     const webDatePath = `${yearPart}/${monthPart}/${dayPart}`;
     const newUrl = `/uploads/users/${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
     const newId = `${requestingUserId}/${folderName}/${webDatePath}/${newFilenameWithExt}`;
@@ -601,12 +593,8 @@ export async function renameImage(
   }
 }
 
-// --- Folder Management Actions ---
 export interface UserFolder {
   name: string;
-  // path: string; // Could be relative to user's upload dir, e.g., "My Documents"
-  // imageCount?: number; // Optional: for display
-  // createdAt?: number; // Optional
 }
 
 export interface FolderActionResponse {
@@ -622,7 +610,7 @@ export async function createFolderAction(
 ): Promise<FolderActionResponse> {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-        const cookieStore = await cookies();
+        const cookieStore = await cookies(); // Await cookies() before using it
         const tokenExists = cookieStore.has('session_token');
         if (!tokenExists) {
             return { success: false, error: 'Folder creation failed: Session token not found. Please log in.' };
@@ -649,13 +637,11 @@ export async function createFolderAction(
         return { success: false, error: "Invalid folder path." };
     }
     
-    // Check if the main user directory exists, if not create it
     try {
       await fs.access(resolvedUserBase);
     } catch (error: any) {
         if (error.code === 'ENOENT') {
             try {
-                // Explicitly set mode 0o755 (rwxr-xr-x) for the base user directory
                 await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
             } catch (mkdirError) {
                 console.error(`Failed to create base user directory ${resolvedUserBase}:`, mkdirError);
@@ -669,7 +655,6 @@ export async function createFolderAction(
 
 
     try {
-        // Explicitly set mode 0o755 (rwxr-xr-x) for the new folder
         await fs.mkdir(folderPath, { recursive: false, mode: 0o755 }); 
         revalidatePath('/my-images');
         return { success: true, folderName: newFolderName };
@@ -685,7 +670,7 @@ export async function createFolderAction(
 export async function listUserFolders(userIdFromSession?: string): Promise<UserFolder[]> {
     const userId = userIdFromSession || await getCurrentUserIdFromSession();
     if (!userId) {
-        return [{ name: DEFAULT_FOLDER_NAME }]; // Always include default if no user/logged out
+        return [{ name: DEFAULT_FOLDER_NAME }]; 
     }
     const userUploadsPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId);
     const resolvedUserUploadsPath = path.resolve(userUploadsPath);
@@ -694,37 +679,34 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
     if (!resolvedUserUploadsPath.startsWith(resolvedUploadsBase + path.sep) &&
         !resolvedUserUploadsPath.startsWith(resolvedUploadsBase + path.win32.sep)) {
         console.error(`Security Alert: Attempt to list folders outside base uploads directory. User: ${userId}`);
-        return [{ name: DEFAULT_FOLDER_NAME }]; // Fallback to default on security issue
+        return [{ name: DEFAULT_FOLDER_NAME }]; 
     }
     
     let folders: UserFolder[] = [];
     try {
-        await fs.access(userUploadsPath); // Check if user's base upload dir exists
+        await fs.access(userUploadsPath); 
         const entries = await fs.readdir(userUploadsPath, { withFileTypes: true });
         folders = entries
             .filter(dirent => dirent.isDirectory() && dirent.name !== '.' && dirent.name !== '..')
             .map(dirent => ({ name: dirent.name }));
         
     } catch (error: any) {
-        if (error.code === 'ENOENT') { // User directory doesn't exist yet
-            // No user-created folders, so only the default exists conceptually
+        if (error.code === 'ENOENT') { 
         } else {
             console.error(`Error listing folders for user ${userId}:`, error);
-            // On other errors, return default to be safe
         }
     }
 
-    // Ensure DEFAULT_FOLDER_NAME is always in the list, and at the beginning if it doesn't exist physically
-    // (even if it doesn't physically exist as a dir yet, it's a valid target for uploads)
     if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
        folders.unshift({ name: DEFAULT_FOLDER_NAME });
     }
 
 
     return folders.sort((a,b) => {
-        if (a.name === DEFAULT_FOLDER_NAME) return -1; // Keep default first
+        if (a.name === DEFAULT_FOLDER_NAME) return -1; 
         if (b.name === DEFAULT_FOLDER_NAME) return 1;
         return a.name.localeCompare(b.name);
     });
 }
+
 

@@ -9,3 +9,4 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
+export const POST_UPLOAD_DELAY_MS = 1000; // Default to 1 second
