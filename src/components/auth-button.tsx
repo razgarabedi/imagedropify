@@ -62,7 +62,7 @@ export function AuthButton() {
               My Images
             </Link>
           </DropdownMenuItem>
-          {user.role === 'admin' && (
+          {user.role === 'Admin' && ( // Changed 'admin' to 'Admin'
             <DropdownMenuItem asChild className="cursor-pointer">
               <Link href="/admin/dashboard">
                 <ShieldCheck className="mr-2 h-4 w-4" />
@@ -89,3 +89,4 @@ export function AuthButton() {
     </Button>
   );
 }
+
