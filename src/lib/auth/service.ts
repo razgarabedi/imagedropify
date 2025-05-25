@@ -9,6 +9,7 @@ import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
 import path from 'path'; // Keep for UPLOAD_DIR_BASE_PUBLIC
 import fs from 'fs/promises'; // Keep for deleting user upload directories
+import * as jose from 'jose'; // Added import for jose
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
 const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY || 'your-super-secret-jwt-key-change-me';
@@ -141,9 +142,20 @@ export async function updateUserStatusService(userId: string, newStatus: UserSta
   }
 
   if (user.role === 'Admin' && newStatus !== 'approved') {
-    console.warn(`Attempt to change status of admin user ${userId} to '${newStatus}'. This is usually not recommended.`);
-    // Optionally prevent: throw new Error("Cannot change status of an admin user.");
+    // For admins, their status should always remain 'approved'.
+    // This check prevents an admin from accidentally having their status changed to something that would lock them out.
+    // If an admin needs to be "banned", it implies a more severe action like account deletion or manual DB intervention.
+    console.warn(`Attempt to change status of admin user ${userId} to '${newStatus}'. Admins must remain 'approved'.`);
+    if (user.status !== 'approved') { // If admin somehow got into a non-approved state, fix it.
+        const fixedAdmin = await prisma.user.update({
+            where: { id: userId },
+            data: { status: 'approved' },
+        });
+        return excludePassword(fixedAdmin);
+    }
+    return excludePassword(user); // Return the user as is, status unchanged if it was already 'approved'.
   }
+
 
   const updatedUser = await prisma.user.update({
     where: { id: userId },
@@ -182,6 +194,15 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
         console.warn(`User with ID ${userIdToDelete} not found for deletion.`);
         return false;
     }
+    if (userToDelete.role === 'Admin') {
+        const adminCount = await prisma.user.count({ where: { role: 'Admin' } });
+        if (adminCount <= 1) {
+            console.error(`Cannot delete the last admin user (ID: ${userIdToDelete}).`);
+            // throw new Error('Cannot delete the last admin user.'); // Or return false
+            return false;
+        }
+    }
+
 
     await prisma.user.delete({
       where: { id: userIdToDelete },
@@ -209,6 +230,8 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
         console.log(`User upload directory ${resolvedUserUploadDir} not found, nothing to delete.`);
       } else {
         console.error(`Error deleting user upload directory ${resolvedUserUploadDir}:`, error);
+        // Decide if this failure should make the whole operation return false.
+        // For now, if DB deletion was successful, we might consider it partially successful.
       }
     }
     return true;
