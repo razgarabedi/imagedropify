@@ -1,0 +1,22 @@
+[
+  {
+    "id": "4ae70772-a913-407f-8bf7-c61369e1887c",
+    "email": "razgar@nginxify.com",
+    "password": "a3eilm2s2y",
+    "role": "admin",
+    "status": "approved",
+    "maxImages": null,
+    "maxSingleUploadSizeMB": null,
+    "maxTotalStorageMB": null
+  },
+  {
+    "id": "1eae68a1-1c37-4da0-987d-86ea6c57f9e3",
+    "email": "rzgar.abedi@gmail.com",
+    "password": "32554455",
+    "role": "user",
+    "status": "approved",
+    "maxImages": null,
+    "maxSingleUploadSizeMB": null,
+    "maxTotalStorageMB": null
+  }
+]

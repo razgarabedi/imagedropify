@@ -6,30 +6,19 @@
 .pnp.js
 .yarn/install-state.gz
 
-# Production
-/build
+# Vercel
+.vercel
+
+# Next.js
 /.next/
 /out/
 
-# Misc
-.DS_Store
-*.pem
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# Local .env files
+# Environment variables
 .env*.local
-.env
-
-# Turborepo
-.turbo
 
 # IDE
 .idea
@@ -40,18 +29,26 @@ lerna-debug.log*
 !.vscode/extensions.json
 *.code-workspace
 
-# Next.js
-.next/
-out/
+# Local JSON data files (to be replaced by database)
+# users.json
+# server-settings.json
+# folder-shares.json
 
-# Test results
-/coverage
-/.nyc_output
-
-# Mac files
+# macOS
 .DS_Store
 .AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
 
-# Application-specific
-public/uploads/
-users.json
+# Prisma
+# If you are using Prisma, you might want to ignore migration files if they are auto-generated and applied by CI/CD
+# Otherwise, if you commit them, uncomment the lines below.
+# prisma/migrations/*
+# !prisma/migrations/migration_lock.toml
+# prisma/dev.db
+# prisma/dev.db-journal

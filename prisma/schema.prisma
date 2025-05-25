@@ -1,0 +1,58 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                      String        @id @default(uuid())
+  email                   String        @unique
+  // IMPORTANT: Password should be hashed before storing.
+  // This schema defines it as a string, but application logic MUST handle hashing.
+  password                String
+  role                    UserRole      @default(User)
+  status                  UserStatus    @default(Pending)
+  maxImages               Int?
+  maxSingleUploadSizeMB Float?
+  maxTotalStorageMB     Float?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  folderShares            FolderShare[]
+
+  @@index([email])
+}
+
+model SiteSetting {
+  id                    Int      @id @default(1) @unique // Ensures only one row for global settings
+  maxUploadSizeMB       Int      @default(6)
+  homepageImageUrl    String?
+  registrationsEnabled  Boolean  @default(true)
+  updatedAt             DateTime @updatedAt
+}
+
+model FolderShare {
+  shareId    String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderName String
+  createdAt  DateTime @default(now())
+
+  @@index([userId, folderName])
+}
+
+enum UserRole {
+  User
+  Admin
+}
+
+enum UserStatus {
+  Pending
+  Approved
+  Rejected
+}
