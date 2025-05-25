@@ -1,4 +1,6 @@
+
 {
   "maxUploadSizeMB": 6,
-  "homepageImageUrl": "https://placehold.co/300x200.png"
+  "homepageImageUrl": "https://placehold.co/300x200.png",
+  "registrationsEnabled": true
 }

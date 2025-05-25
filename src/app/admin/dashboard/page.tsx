@@ -1,7 +1,8 @@
+
 // src/app/admin/dashboard/page.tsx
 import { Suspense } from 'react';
 import { getAllUsersWithActivityAction } from '@/app/actions/userActions';
-import { getCurrentSettingsAction } from '@/app/actions/settingsActions'; // Updated import
+import { getCurrentSettingsAction } from '@/app/actions/settingsActions'; 
 import { UserTable } from '@/components/admin/user-table';
 import { SettingsForm } from '@/components/admin/settings-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,10 +44,12 @@ async function UserManagementSection() {
 }
 
 async function SiteSettingsSection() {
-  // Use the new getCurrentSettingsAction to fetch all settings
   const settingsResponse = await getCurrentSettingsAction();
   
-  if (!settingsResponse.success || settingsResponse.currentMaxUploadSizeMB === undefined) {
+  if (!settingsResponse.success || 
+      settingsResponse.currentMaxUploadSizeMB === undefined ||
+      settingsResponse.currentRegistrationsEnabled === undefined
+     ) {
      return (
       <Card>
         <CardHeader>
@@ -70,10 +73,10 @@ async function SiteSettingsSection() {
         <CardDescription>Configure global application settings.</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Pass both initial settings to the form */}
         <SettingsForm 
             initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB} 
             initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null}
+            initialRegistrationsEnabled={settingsResponse.currentRegistrationsEnabled} // Pass the new setting
         />
       </CardContent>
     </Card>
@@ -128,14 +131,18 @@ function SiteSettingsSkeleton() {
         <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Site Settings</CardTitle>
         <CardDescription>Configure global application settings.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6"> {/* Increased space for more settings */}
+      <CardContent className="space-y-6">
         <div className="space-y-2">
-            <Skeleton className="h-6 w-1/3" /> {/* Label skeleton */}
-            <Skeleton className="h-10 w-1/2" /> {/* Input skeleton */}
+            <Skeleton className="h-6 w-1/3" /> 
+            <Skeleton className="h-10 w-1/2" /> 
         </div>
          <div className="space-y-2">
-            <Skeleton className="h-6 w-1/3" /> {/* Label skeleton */}
-            <Skeleton className="h-10 w-full" /> {/* Input skeleton for URL */}
+            <Skeleton className="h-6 w-1/3" /> 
+            <Skeleton className="h-10 w-full" /> 
+        </div>
+         <div className="space-y-2">
+            <Skeleton className="h-6 w-1/3" /> 
+            <Skeleton className="h-10 w-1/4" /> {/* For the switch and label */}
         </div>
         <Skeleton className="h-10 w-1/4" /> {/* Button skeleton */}
       </CardContent>
