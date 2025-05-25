@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle, XCircle, RotateCcw, Trash2, ShieldAlert, Settings2 } from 'lucide-react'; // Added Settings2 icon
+import { Loader2, CheckCircle, XCircle, RotateCcw, Trash2, ShieldAlert, Settings2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +28,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { UserLimitsDialog } from './user-limits-dialog'; // Import the new dialog
+import { UserLimitsDialog } from './user-limits-dialog';
+import type { UserStatus, UserRole } from '@/lib/auth/types'; // Import UserStatus and UserRole
 
 interface UserTableProps {
   users: UserWithActivity[];
@@ -36,19 +37,16 @@ interface UserTableProps {
 
 const initialActionState: AdminUserActionResponse = { success: false };
 
-// --- Action Buttons Component (handles status changes and deletion) ---
 function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, currentAdminId: string | undefined }) {
   const { toast } = useToast();
   
   const [approveState, approveFormAction, isApprovePending] = useActionState(approveUserAction, initialActionState);
-  const [rejectState, rejectFormAction, isRejectPending] = useActionState(rejectUserAction, initialActionState); // Reject/Ban
+  const [rejectState, rejectFormAction, isRejectPending] = useActionState(rejectUserAction, initialActionState);
   const [unbanState, unbanFormAction, isUnbanPending] = useActionState(unbanUserAction, initialActionState);
   const [deleteState, deleteFormAction, isDeletePending] = useActionState(deleteUserAction, initialActionState);
   
-  // State for the Limits Dialog
   const [isLimitsDialogOpen, setIsLimitsDialogOpen] = useState(false);
 
-  // Effect hooks for toast messages (unchanged)
   useEffect(() => {
     if (!isApprovePending && approveState.success && approveState.user) {
       toast({ title: 'User Approved', description: `${approveState.user.email} has been approved.` });
@@ -67,7 +65,7 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
 
   useEffect(() => {
     if (!isUnbanPending && unbanState.success && unbanState.user) {
-      toast({ title: 'User Unbanned', description: `${unbanState.user.email} status set to 'pending' for re-approval.` });
+      toast({ title: 'User Unbanned', description: `${unbanState.user.email} status set to 'Pending' for re-approval.` });
     } else if (!isUnbanPending && unbanState.error) {
       toast({ variant: 'destructive', title: 'Unban Failed', description: unbanState.error });
     }
@@ -91,9 +89,9 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
   const anyActionPending = isApprovePending || isRejectPending || isUnbanPending || isDeletePending;
 
   return (
-    <div className="flex flex-wrap items-center gap-2"> {/* Ensure items align */}
-      {/* Status Action Buttons */}
-      {user.status === 'pending' && (
+    <div className="flex flex-wrap items-center gap-2">
+      {/* Status Action Buttons - check against capitalized status from Prisma enum */}
+      {user.status === 'Pending' && (
         <>
           <Button 
             size="sm" 
@@ -117,7 +115,7 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
           </Button>
         </>
       )}
-      {user.status === 'approved' && !isCurrentUserTheAdmin && (
+      {user.status === 'Approved' && !isCurrentUserTheAdmin && (
         <Button 
           size="sm" 
           variant="outline" 
@@ -129,7 +127,7 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
           {isRejectPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldAlert className="mr-2 h-4 w-4" />} Ban User
         </Button>
       )}
-      {user.status === 'rejected' && !isCurrentUserTheAdmin && (
+      {user.status === 'Rejected' && !isCurrentUserTheAdmin && (
          <Button 
           size="sm" 
           variant="outline" 
@@ -142,9 +140,7 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
         </Button>
       )}
 
-       {/* Limits Button/Dialog Trigger */}
-       {!isCurrentUserTheAdmin && (
-         <UserLimitsDialog 
+       <UserLimitsDialog 
             user={user} 
             open={isLimitsDialogOpen} 
             onOpenChange={setIsLimitsDialogOpen}
@@ -152,17 +148,15 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
                  <Button 
                     size="sm" 
                     variant="outline" 
-                    disabled={anyActionPending}
-                    title={`Manage limits for ${user.email}`}
+                    disabled={anyActionPending || isCurrentUserTheAdmin} // Also disable for self
+                    title={isCurrentUserTheAdmin ? "Cannot set limits for own admin account" : `Manage limits for ${user.email}`}
                     className="text-foreground border-border hover:bg-accent"
                 >
                     <Settings2 className="mr-2 h-4 w-4" /> Limits
                 </Button>
             }
          />
-       )}
 
-      {/* Delete User Button/Dialog Trigger */}
       {!isCurrentUserTheAdmin && (
         <AlertDialog>
           <AlertDialogTrigger asChild>
@@ -201,24 +195,23 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
   );
 }
 
-// --- Main User Table Component ---
 export function UserTable({ users }: UserTableProps) {
-  const { user: currentAdmin } = useAuth(); // Get current admin user from context
+  const { user: currentAdmin } = useAuth(); 
 
   if (!users || users.length === 0) {
     return <p className="text-muted-foreground">No users found.</p>;
   }
 
-  const getStatusBadgeVariant = (status: UserWithActivity['status']): "default" | "secondary" | "destructive" | "outline" => {
+  const getStatusBadgeVariant = (status: UserStatus): "default" | "secondary" | "destructive" | "outline" => {
+     // Match against capitalized status from Prisma enum
      switch (status) {
-      case 'approved': return 'default'; // Using 'default' for approved (often primary color)
-      case 'pending': return 'secondary'; // Using 'secondary' for pending
-      case 'rejected': return 'destructive'; // Using 'destructive' for rejected/banned
+      case 'Approved': return 'default'; 
+      case 'Pending': return 'secondary'; 
+      case 'Rejected': return 'destructive'; 
       default: return 'outline';
     }
   };
   
-   // Helper to display limits or 'Default'
   const formatLimit = (value: number | null | undefined, unit: string = '', defaultText = 'Global'): string => {
     if (value === null || value === undefined) {
       return defaultText;
@@ -231,7 +224,6 @@ export function UserTable({ users }: UserTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            {/* Adjust widths as needed */}
             <TableHead className="min-w-[150px] break-words">Email</TableHead>
             <TableHead>Role</TableHead>
             <TableHead>Status</TableHead>
@@ -246,18 +238,19 @@ export function UserTable({ users }: UserTableProps) {
             <TableRow key={user.id}>
               <TableCell className="font-medium break-words">{user.email}</TableCell>
               <TableCell>
-                <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
+                 {/* Role is 'Admin' or 'User' from Prisma enum */}
+                <Badge variant={user.role === 'Admin' ? 'default' : 'secondary'}>
                   {user.role}
                 </Badge>
               </TableCell>
                <TableCell>
+                 {/* Status is 'Pending', 'Approved', or 'Rejected' */}
                 <Badge variant={getStatusBadgeVariant(user.status)} className="capitalize">
                   {user.status}
                 </Badge>
               </TableCell>
               <TableCell className="text-right">{user.imageCount}</TableCell>
               <TableCell className="text-right">{user.totalStorageUsedMB}</TableCell>
-              {/* Display Limits */}
                <TableCell className="text-center text-xs whitespace-nowrap"> 
                  {formatLimit(user.maxImages, '', 'Unlimited')} / {formatLimit(user.maxSingleUploadSizeMB)} / {formatLimit(user.maxTotalStorageMB, '', 'Unlimited')}
                </TableCell>

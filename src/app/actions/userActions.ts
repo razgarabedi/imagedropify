@@ -1,4 +1,3 @@
-
 // src/app/actions/userActions.ts
 'use server';
 
@@ -10,8 +9,8 @@ import {
     updateUserStatusService,
     updateUserLimitsService,
     deleteUserAndRelatedDataService 
-} from '@/lib/auth/service'; // These services are now Prisma-based
-import type { User, UserStatus, UserLimits } from '@/lib/auth/types';
+} from '@/lib/auth/service';
+import type { User, UserStatus, UserLimits, UserRole } from '@/lib/auth/types';
 import { countUserImages, calculateUserTotalStorage } from '@/app/actions/imageActions';
 
 export interface UserWithActivity extends User {
@@ -51,12 +50,12 @@ const updateUserLimitsSchema = z.object({
 
 export async function getAllUsersWithActivityAction(): Promise<AdminUserListResponse> {
   const currentUser = await getCurrentUserAction();
-  if (!currentUser || currentUser.role !== 'Admin') { // Role check for 'Admin'
+  if (!currentUser || currentUser.role !== 'Admin') { // Role check for 'Admin' (capitalized from Prisma enum)
     return { success: false, error: 'Unauthorized: Admin access required.' };
   }
 
   try {
-    const users = await getAllUsersForAdmin(); // Now fetches from Prisma
+    const users = await getAllUsersForAdmin();
     const usersWithActivity: UserWithActivity[] = await Promise.all(
       users.map(async (user) => {
         const [imageCount, totalStorageUsedBytes] = await Promise.all([
@@ -80,15 +79,16 @@ export async function getAllUsersWithActivityAction(): Promise<AdminUserListResp
 
 async function updateUserStatusInternal(
   userId: string, 
-  newStatus: UserStatus,
+  newStatus: UserStatus, // UserStatus is now 'Pending' | 'Approved' | 'Rejected'
   adminUser: User
 ): Promise<AdminUserActionResponse> {
-  if (userId === adminUser.id && newStatus !== 'approved') {
+  // Check against capitalized status 'Approved'
+  if (userId === adminUser.id && newStatus !== 'Approved') {
     return { success: false, error: `Cannot change your own admin account status to '${newStatus}'.` };
   }
 
   try {
-    const updatedUser = await updateUserStatusService(userId, newStatus); // Now uses Prisma
+    const updatedUser = await updateUserStatusService(userId, newStatus); // newStatus is already capitalized
     if (!updatedUser) {
         return { success: false, error: `User with ID ${userId} not found.` };
     }
@@ -111,7 +111,7 @@ export async function approveUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
   
-  return updateUserStatusInternal(userId, 'approved', adminUser);
+  return updateUserStatusInternal(userId, 'Approved', adminUser); // Use capitalized 'Approved'
 }
 
 export async function rejectUserAction(
@@ -125,7 +125,7 @@ export async function rejectUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
 
-  return updateUserStatusInternal(userId, 'rejected', adminUser);
+  return updateUserStatusInternal(userId, 'Rejected', adminUser); // Use capitalized 'Rejected'
 }
 
 export async function unbanUserAction(
@@ -139,7 +139,7 @@ export async function unbanUserAction(
   const userId = formData.get('userId') as string;
   if (!userId) return { success: false, error: 'User ID is required.' };
 
-  return updateUserStatusInternal(userId, 'pending', adminUser);
+  return updateUserStatusInternal(userId, 'Pending', adminUser); // Use capitalized 'Pending'
 }
 
 export async function deleteUserAction(
@@ -161,7 +161,7 @@ export async function deleteUserAction(
   }
 
   try {
-    const deletionSuccess = await deleteUserAndRelatedDataService(userIdToDelete); // Now uses Prisma
+    const deletionSuccess = await deleteUserAndRelatedDataService(userIdToDelete);
     if (!deletionSuccess) {
       return { success: false, error: `Failed to delete user ${userIdToDelete}. User may not exist or data deletion encountered issues.` };
     }
@@ -205,7 +205,7 @@ export async function updateUserLimitsAction(
    };
 
   try {
-    const updatedUser = await updateUserLimitsService(userId, finalLimits); // Now uses Prisma
+    const updatedUser = await updateUserLimitsService(userId, finalLimits);
     if (!updatedUser) {
       return { success: false, error: `User with ID ${userId} not found.` };
     }

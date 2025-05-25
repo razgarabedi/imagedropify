@@ -1,4 +1,3 @@
-
 // src/app/actions/authActions.ts
 'use server';
 
@@ -10,7 +9,7 @@ import {
   createSessionToken,
   verifySessionToken as verifyTokenService,
   findUserById,
-  countUsers, // Import countUsers
+  countUsers,
 } from '@/lib/auth/service';
 import type { User } from '@/lib/auth/types';
 import { getRegistrationsEnabled } from '@/lib/settingsService';
@@ -50,13 +49,12 @@ export async function signupUserAction(
 
   const registrationsAreEnabled = await getRegistrationsEnabled();
   if (!registrationsAreEnabled) {
-    const currentTotalUsers = await countUsers(); // Use Prisma to count users
+    const currentTotalUsers = await countUsers();
     const isFirstUserAttempt = currentTotalUsers === 0;
 
     if (!isFirstUserAttempt) {
       return { success: false, error: 'New user registrations are currently disabled by the administrator.' };
     }
-    // If no users exist, allow this signup (it will become admin)
   }
 
   const validation = signupSchema.safeParse({ email: rawEmail, password: rawPassword });
@@ -69,12 +67,10 @@ export async function signupUserAction(
   }
 
   try {
-    // findUserByEmail is already refactored to use Prisma
-    // const existingUser = await findUserByEmail(validation.data.email);
-    // createUser handles check for existing user with Prisma
     const newUser = await createUser(validation.data.email, validation.data.password);
 
-    if (newUser.status === 'pending') {
+    // Check against capitalized status from Prisma enum
+    if (newUser.status === 'Pending') {
       return {
         success: true,
         message: 'Signup successful! Your account is pending approval by an administrator.',
@@ -85,13 +81,13 @@ export async function signupUserAction(
       userId: newUser.id,
       email: newUser.email,
       role: newUser.role,
-      status: newUser.status,
+      status: newUser.status, // newUser.status is already capitalized here
     });
     const cookieStore = await cookies();
     cookieStore.set('session_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 2,
+      maxAge: 60 * 60 * 2, 
       path: '/',
       sameSite: 'lax',
     });
@@ -99,7 +95,6 @@ export async function signupUserAction(
     return { success: true, user: newUser, redirectTo: '/' };
   } catch (error: any) {
     console.error('Signup error:', error);
-    // Check if the error is from Prisma due to unique constraint (email already exists)
     if (error.code === 'P2002' && error.meta?.target?.includes('email')) {
         return { success: false, error: 'User with this email already exists.' };
     }
@@ -132,15 +127,16 @@ export async function loginUserAction(
       return { success: false, error: 'Invalid email or password.' };
     }
 
-    if (user.status === 'pending') {
+    // Check against capitalized status from Prisma enum
+    if (user.status === 'Pending') {
       return { success: false, error: 'Account pending approval by administrator.' };
     }
 
-    if (user.status === 'rejected') {
+    if (user.status === 'Rejected') {
       return { success: false, error: 'Your account registration has been rejected or you are banned.' };
     }
 
-    if (user.status !== 'approved') {
+    if (user.status !== 'Approved') {
       return { success: false, error: 'Account not active or status unknown.' };
     }
 
@@ -148,13 +144,13 @@ export async function loginUserAction(
       userId: user.id,
       email: user.email,
       role: user.role,
-      status: user.status,
+      status: user.status, // user.status is already capitalized here
     });
     const cookieStore = await cookies();
     cookieStore.set('session_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 2,
+      maxAge: 60 * 60 * 2, 
       path: '/',
       sameSite: 'lax',
     });
@@ -191,7 +187,6 @@ export async function getCurrentUserAction(): Promise<User | null> {
     return null;
   }
   
-  // Fetch user from DB to ensure data is fresh and user exists/status is correct
   const userFromDb = await findUserById(payload.userId);
   if (!userFromDb) {
     console.log(`User ${payload.userId} not found in DB, invalidating session.`);
@@ -199,19 +194,17 @@ export async function getCurrentUserAction(): Promise<User | null> {
     return null;
   }
 
-  // Compare essential details from token with DB. Status is most critical.
   if (userFromDb.email === payload.email && userFromDb.role === payload.role && userFromDb.status === payload.status) {
-    if (userFromDb.status === 'approved') {
-      return userFromDb; // User is valid and approved
+    // Check against capitalized status from Prisma enum
+    if (userFromDb.status === 'Approved') {
+      return userFromDb; 
     } else {
-      // User status in DB is not 'approved' (e.g., 'pending', 'rejected'), invalidate session
       console.log(`User ${payload.userId} status is ${userFromDb.status} in DB, invalidating session.`);
       cookieStore.delete('session_token');
       return null;
     }
   }
 
-  // If there's a mismatch in other critical data (email, role) between token and DB, invalidate.
   console.log(`User ${payload.userId} data mismatch between token and DB, invalidating session.`);
   cookieStore.delete('session_token');
   return null;

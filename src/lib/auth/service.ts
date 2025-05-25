@@ -1,19 +1,18 @@
-
 // src/lib/auth/service.ts
 'use server';
 
 import prisma from '@/lib/prisma';
 import { v4 as uuidv4 } from 'uuid';
-import type { User, SessionPayload, UserStatus, UserLimits } from './types';
+import type { User, SessionPayload, UserStatus, UserLimits, UserRole } from './types'; // Ensure UserRole is imported if needed
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
-import path from 'path'; // Keep for UPLOAD_DIR_BASE_PUBLIC
-import fs from 'fs/promises'; // Keep for deleting user upload directories
-import * as jose from 'jose'; // Added import for jose
+import path from 'path';
+import fs from 'fs/promises';
+import * as jose from 'jose';
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
 const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY || 'your-super-secret-jwt-key-change-me';
-const JWT_EXPIRATION_TIME = '2h'; // Token expiration time
+const JWT_EXPIRATION_TIME = '2h'; 
 
 if (JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me' && process.env.NODE_ENV === 'production') {
   console.warn(
@@ -24,7 +23,6 @@ if (JWT_SECRET_KEY === 'your-super-secret-jwt-key-change-me' && process.env.NODE
 const secret = new TextEncoder().encode(JWT_SECRET_KEY);
 const SALT_ROUNDS = 10;
 
-// Helper to exclude password from user object
 function excludePassword(user: any): User {
   if (!user) return user;
   const { password, ...userWithoutPassword } = user;
@@ -55,8 +53,8 @@ export async function createUser(email: string, passwordInput: string): Promise<
   const totalUsers = await prisma.user.count();
   const isFirstUser = totalUsers === 0;
 
-  const newUserRole = isFirstUser ? 'Admin' : 'User';
-  const newUserStatus: UserStatus = isFirstUser ? 'approved' : 'pending';
+  const newUserRole: UserRole = isFirstUser ? 'Admin' : 'User'; // Use capitalized enum value
+  const newUserStatus: UserStatus = isFirstUser ? 'Approved' : 'Pending'; // Use capitalized enum value
 
   const user = await prisma.user.create({
     data: {
@@ -64,7 +62,7 @@ export async function createUser(email: string, passwordInput: string): Promise<
       email,
       password: hashedPassword,
       role: newUserRole,
-      status: newUserStatus,
+      status: newUserStatus, // This will now be 'Admin' or 'User', 'Approved' or 'Pending'
       maxImages: null,
       maxSingleUploadSizeMB: null,
       maxTotalStorageMB: null,
@@ -79,7 +77,7 @@ export async function verifyPassword(email: string, passwordAttempt: string): Pr
   });
 
   if (!userWithPassword || !userWithPassword.password) {
-    return null; // User not found or password not set (should not happen with new users)
+    return null;
   }
 
   const isMatch = bcrypt.compareSync(passwordAttempt, userWithPassword.password);
@@ -101,10 +99,16 @@ export async function createSessionToken(payload: Omit<SessionPayload, 'exp' | '
 export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jose.jwtVerify(token, secret);
-    if (payload && typeof payload.userId === 'string' && typeof payload.email === 'string' && typeof payload.role === 'string' && typeof payload.status === 'string') {
+    // Ensure the payload properties exist and are of the correct type
+    if (payload && 
+        typeof payload.userId === 'string' && 
+        typeof payload.email === 'string' && 
+        typeof payload.role === 'string' && // role is 'Admin' or 'User'
+        typeof payload.status === 'string' // status is 'Pending', 'Approved', or 'Rejected'
+       ) {
       return payload as SessionPayload;
     }
-    console.error('Token payload missing required fields (userId, email, role, status)');
+    console.error('Token payload missing required fields or incorrect types (userId, email, role, status)');
     return null;
   } catch (error: any) {
     if (error instanceof jose.errors.JOSEError) {
@@ -141,25 +145,22 @@ export async function updateUserStatusService(userId: string, newStatus: UserSta
     return null;
   }
 
-  if (user.role === 'Admin' && newStatus !== 'approved') {
-    // For admins, their status should always remain 'approved'.
-    // This check prevents an admin from accidentally having their status changed to something that would lock them out.
-    // If an admin needs to be "banned", it implies a more severe action like account deletion or manual DB intervention.
-    console.warn(`Attempt to change status of admin user ${userId} to '${newStatus}'. Admins must remain 'approved'.`);
-    if (user.status !== 'approved') { // If admin somehow got into a non-approved state, fix it.
+  // Ensure role is correctly typed if comparing directly (UserRole is 'Admin' | 'User')
+  if (user.role === 'Admin' && newStatus !== 'Approved') {
+    console.warn(`Attempt to change status of admin user ${userId} to '${newStatus}'. Admins must remain 'Approved'.`);
+    if (user.status !== 'Approved') { 
         const fixedAdmin = await prisma.user.update({
             where: { id: userId },
-            data: { status: 'approved' },
+            data: { status: 'Approved' }, // Ensure admin status is 'Approved'
         });
         return excludePassword(fixedAdmin);
     }
-    return excludePassword(user); // Return the user as is, status unchanged if it was already 'approved'.
+    return excludePassword(user); 
   }
-
 
   const updatedUser = await prisma.user.update({
     where: { id: userId },
-    data: { status: newStatus },
+    data: { status: newStatus }, // newStatus is already capitalized
   });
   return excludePassword(updatedUser);
 }
@@ -171,8 +172,6 @@ export async function updateUserLimitsService(userId: string, limits: UserLimits
     return null;
   }
   
-  // Prisma handles undefined fields as "do not update"
-  // null means explicitly set to null in the DB
   const dataToUpdate: Partial<UserLimits> = {};
   if (limits.maxImages !== undefined) dataToUpdate.maxImages = limits.maxImages;
   if (limits.maxSingleUploadSizeMB !== undefined) dataToUpdate.maxSingleUploadSizeMB = limits.maxSingleUploadSizeMB;
@@ -187,8 +186,6 @@ export async function updateUserLimitsService(userId: string, limits: UserLimits
 
 export async function deleteUserAndRelatedDataService(userIdToDelete: string): Promise<boolean> {
   try {
-    // Prisma's `onDelete: Cascade` in schema for FolderShare.user handles related shares.
-    // We need to find the user first to log their email before deletion for logging purposes.
     const userToDelete = await prisma.user.findUnique({ where: { id: userIdToDelete } });
     if (!userToDelete) {
         console.warn(`User with ID ${userIdToDelete} not found for deletion.`);
@@ -198,18 +195,15 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
         const adminCount = await prisma.user.count({ where: { role: 'Admin' } });
         if (adminCount <= 1) {
             console.error(`Cannot delete the last admin user (ID: ${userIdToDelete}).`);
-            // throw new Error('Cannot delete the last admin user.'); // Or return false
             return false;
         }
     }
-
 
     await prisma.user.delete({
       where: { id: userIdToDelete },
     });
     console.log(`User ${userToDelete.email} (ID: ${userIdToDelete}) and their related data (folder shares) deleted from database.`);
 
-    // Delete user's upload directory
     const userUploadDir = path.join(UPLOAD_DIR_BASE_PUBLIC, userIdToDelete);
     const resolvedUserUploadDir = path.resolve(userUploadDir);
     const resolvedUploadDirBase = path.resolve(UPLOAD_DIR_BASE_PUBLIC);
@@ -218,7 +212,7 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
         !resolvedUserUploadDir.startsWith(resolvedUploadDirBase + path.win32.sep) ||
         resolvedUserUploadDir === resolvedUploadDirBase) {
       console.error(`Security alert: Attempt to delete directory outside designated user uploads area. Path: ${userUploadDir}, UserID: ${userIdToDelete}`);
-      return true; // User record was deleted from DB.
+      return true; 
     }
 
     try {
@@ -230,8 +224,6 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
         console.log(`User upload directory ${resolvedUserUploadDir} not found, nothing to delete.`);
       } else {
         console.error(`Error deleting user upload directory ${resolvedUserUploadDir}:`, error);
-        // Decide if this failure should make the whole operation return false.
-        // For now, if DB deletion was successful, we might consider it partially successful.
       }
     }
     return true;
@@ -241,7 +233,6 @@ export async function deleteUserAndRelatedDataService(userIdToDelete: string): P
   }
 }
 
-// New function to count users, useful for the first user check
 export async function countUsers(): Promise<number> {
     return prisma.user.count();
 }

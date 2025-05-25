@@ -1,13 +1,14 @@
 // src/lib/auth/types.ts
 
-export type UserStatus = 'pending' | 'approved' | 'rejected';
+// Use capitalized values to match Prisma enum
+export type UserStatus = 'Pending' | 'Approved' | 'Rejected';
+export type UserRole = 'Admin' | 'User'; // Ensure UserRole also matches Prisma enum if used directly
 
 export interface User {
   id: string;
   email: string;
-  role: 'admin' | 'user'; 
-  status: UserStatus; // Added status field
-  // User-specific limits (optional). null or undefined means no specific limit (global or default applies).
+  role: UserRole; 
+  status: UserStatus;
   maxImages?: number | null; 
   maxSingleUploadSizeMB?: number | null;
   maxTotalStorageMB?: number | null; 
@@ -16,13 +17,12 @@ export interface User {
 export interface SessionPayload {
   userId: string;
   email: string;
-  role: 'admin' | 'user'; 
-  status: UserStatus; // Added status field
-  exp?: number; // Expiration time for JWT
-  iat?: number; // Issued at time for JWT
+  role: UserRole; 
+  status: UserStatus;
+  exp?: number; 
+  iat?: number; 
 }
 
-// Type for updating user limits
 export interface UserLimits {
     maxImages?: number | null;
     maxSingleUploadSizeMB?: number | null;
