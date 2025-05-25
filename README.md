@@ -71,7 +71,11 @@ This application uses PostgreSQL as its database and Prisma as its ORM.
         ```sql
         GRANT ALL PRIVILEGES ON DATABASE imagedrop TO imagedrop_user;
         ```
-    *   (Optional) If you want the user to be able to create tables (which Prisma migrations will do), grant them CREATEDB or ensure they are the owner. Granting ownership is common:
+    *   **Grant `CREATEDB` permission (Needed for Prisma's shadow database during development):**
+        ```sql
+        ALTER USER imagedrop_user CREATEDB;
+        ```
+    *   (Optional but Recommended) Make the new user the owner of the database. This can also help with permissions.
         ```sql
         ALTER DATABASE imagedrop OWNER TO imagedrop_user;
         ```
@@ -90,14 +94,15 @@ This application uses PostgreSQL as its database and Prisma as its ORM.
         Format: `DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@YOUR_HOST:YOUR_PORT/YOUR_DATABASE_NAME?schema=public"`
         Example using the user and database created above (assuming PostgreSQL is running on localhost, port 5432):
         `DATABASE_URL="postgresql://imagedrop_user:your_secure_password@localhost:5432/imagedrop?schema=public"`
-    *   **CRITICAL:** Ensure this `DATABASE_URL` is correctly set *before* running Prisma migrations. Prisma CLI needs this variable to connect to your database.
+    *   **CRITICAL:** Ensure this `DATABASE_URL` is correctly set and saved *before* running Prisma migrations. The Prisma CLI needs this variable to connect to your database.
 
 4.  **Run Prisma Migrations:**
     Apply the database schema defined in `prisma/schema.prisma`:
     ```bash
     npx prisma migrate dev --name init
     ```
-    If you encounter an error like `P1012: Environment variable not found: DATABASE_URL`, it means Prisma could not find your `DATABASE_URL`. Double-check your `.env.local` file and ensure it's correctly set and saved in the project root.
+    If you encounter an error like `P1012: Environment variable not found: DATABASE_URL`, it means Prisma could not find your `DATABASE_URL`. Double-check your `.env.local` file (its location in the project root and its content).
+    If you encounter `P3014: Prisma Migrate could not create the shadow database`, ensure the database user has `CREATEDB` permission (see step 2).
 
     If deploying to production, you would typically use:
     ```bash
@@ -203,7 +208,7 @@ npx prisma generate
 # Run Database Migrations (to create/update tables)
 # For the first deployment or if schema changes are expected:
 npx prisma migrate deploy
-# If it's a very first setup and you need to create the initial migration:
+# If it's a very first setup and you need to create the initial migration (and dev database):
 # npx prisma migrate dev --name initial_migration_name (then use 'deploy' for subsequent updates)
 
 # Build the Next.js application
@@ -625,7 +630,7 @@ sudo certbot renew --dry-run # Test renewal
         DELETE FROM "User";
         -- To reset auto-incrementing IDs if necessary (optional, Prisma handles UUIDs fine without this for User/FolderShare)
         -- For SiteSetting if it uses an auto-incrementing ID and you want it to start from 1 again:
-        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1;
+        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1; 
         ```
         Exit `psql` with `\q`.
     *   **Option C: Full Reset (Drop Tables & Re-migrate - Use with caution)**
