@@ -165,6 +165,7 @@ sudo setfacl -dR -m u:www-data:rx public/uploads  # Default for new items (ensur
 
 # 5. Nginx traversal permissions for parent directories
 # Nginx (www-data) needs execute (x) permission to traverse the path to served files.
+sudo chmod o+x /var # Or the most specific parent directory Nginx needs to traverse before /var/www
 sudo chmod o+x /var/www # Allow 'other' to traverse /var/www
 sudo chmod o+x /var/www/imagedrop # Allow 'other' to traverse into app dir
 sudo chmod o+x /var/www/imagedrop/public # Allow 'other' to traverse into public
@@ -192,7 +193,8 @@ pm2 start npm --name "imagedrop" -- run start
 # Optional: Configure PM2 to start on server reboot
 pm2 startup systemd
 # Follow the command output by pm2 startup (usually requires running a command with sudo)
-sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u node_user --hp /home/node_user # Replace node_user and home path
+# Example: sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u node_user --hp /home/node_user 
+# (Replace node_user and home path with your actual user and their home directory)
 
 # Save current PM2 process list
 pm2 save
@@ -255,6 +257,9 @@ server {
         # Disable Nginx's own file descriptor/metadata cache for this location.
         # This helps Nginx pick up newly written files immediately without needing a restart.
         open_file_cache off; 
+        
+        # Disable sendfile for this location; can help with serving recently modified files
+        sendfile off;
 
         # Security: Prevent execution of scripts in uploads folder
         location ~* \.(php|pl|py|jsp|asp|sh|cgi|exe|dll|htaccess)$ {
@@ -286,13 +291,16 @@ server {
     # }
 }
 ```
-
-Enable the site and restart Nginx:
-
+**After saving the Nginx configuration, always test it and then reload Nginx:**
 ```bash
-sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/
-sudo nginx -t # Test Nginx configuration
-sudo systemctl restart nginx
+sudo nginx -t 
+sudo systemctl reload nginx
+```
+
+Enable the site (if not already done) and restart Nginx if it's the first time:
+```bash
+sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/ # Only if not already linked
+sudo systemctl restart nginx # Use restart if it's the first time or major changes
 ```
 
 ### 10. Configure Firewall (UFW)
@@ -322,10 +330,10 @@ sudo certbot renew --dry-run
 
 *   **`JWT_SECRET_KEY`**: Must be strong and unique.
 *   **`users.json` Passwords**: **PLAIN TEXT - INSECURE**. For demo/trusted use only.
-*   **File Permissions**: Critical. Review Step 7 carefully. `node_user` needs write access to `users.json`, `server-settings.json`, `folder-shares.json`, and `public/uploads/...`. `www-data` needs read access to images in `public/uploads/...` and execute access on directories in the path.
+*   **File Permissions**: Critical. Review Step 7 carefully. `node_user` needs write access to `users.json`, `server-settings.json`, `folder-shares.json`, and `public/uploads/...`. `www-data` needs read access to images in `public/uploads/...` and execute access on directories in the path. ACLs are recommended for `public/uploads`.
 *   **Nginx Configuration**:
     *   `client_max_body_size` matches Next.js.
-    *   `/uploads/` location serves images correctly, prevents script execution, and has appropriate caching headers.
+    *   `/uploads/` location serves images correctly, prevents script execution, and has appropriate caching headers (`open_file_cache off;`, `sendfile off;`, `Cache-Control`). **Reload Nginx after any changes.**
 *   **Input Validation**: Server actions use Zod for input validation.
 *   **HTTPS**: Use in production (Step 11).
 
@@ -333,13 +341,17 @@ sudo certbot renew --dry-run
 
 *   **Login Fails:** Check `users.json` status (must be `approved`). Verify `JWT_SECRET_KEY`. Check `pm2 logs imagedrop`.
 *   **Upload Fails / Images Not Displaying (403/404/Invalid Image):**
-    *   **Permissions:** This is the most common cause.
+    *   **Nginx Caching/Stale File Handles:** This is a common cause if images don't appear immediately.
+        *   Ensure `open_file_cache off;` and `sendfile off;` are in your Nginx `/uploads/` location block.
+        *   Make sure `Cache-Control` headers are set as specified.
+        *   **Always run `sudo nginx -t && sudo systemctl reload nginx` after Nginx config changes.**
+        *   A `sudo systemctl restart nginx` might be needed if `reload` isn't enough.
+    *   **Permissions:**
         *   Can `node_user` write to `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/YYYY/MM/DD/`?
         *   Can `www-data` read the image file and execute (traverse) all directories in its path? Use `namei -l /var/www/imagedrop/public/uploads/users/.../image.png` to check the full path.
-    *   **Nginx `location /uploads/` alias:** Is `/var/www/imagedrop/public/uploads/` correct?
-    *   **Nginx Caching:** Ensure `open_file_cache off;` and cache-busting headers are in the Nginx `/uploads/` block. A `sudo systemctl restart nginx` might be needed after Nginx config changes or if caching issues persist.
+    *   **Nginx `location /uploads/` alias:** Is `/var/www/imagedrop/public/uploads/` correct? The trailing slash is important.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit`.
-    *   **Logs:** Check `pm2 logs imagedrop` and Nginx error logs (`/var/log/nginx/imagedrop.error.log`).
+    *   **Logs:** Check `pm2 logs imagedrop` and Nginx error logs (`/var/log/nginx/imagedrop.error.log`). A 404 in Nginx logs for the image URL means Nginx itself can't find/access the file. If the error log shows requests for `/uploads/...` being handled by the Next.js proxy (i.e. getting an HTML response from Next.js), it strongly points to Nginx not finding the static file.
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or not running. Check `pm2 status` and `pm2 logs imagedrop`.
 
 ### 14. Updating the Application
@@ -349,7 +361,7 @@ sudo certbot renew --dry-run
 3.  `npm install` (if dependencies changed)
 4.  `npm run build`
 5.  `pm2 restart imagedrop`
-6.  If Nginx config changed: `sudo nginx -t && sudo systemctl restart nginx`
+6.  If Nginx config changed: `sudo nginx -t && sudo systemctl reload nginx` (or `restart` if significant changes).
 
 ### 15. Resetting Data (Development/Testing Only)
 
@@ -363,3 +375,5 @@ sudo certbot renew --dry-run
     *   The next user to sign up will become the admin. Default settings will be applied.
 
 Your ImageDrop application should now be running!
+
+    
