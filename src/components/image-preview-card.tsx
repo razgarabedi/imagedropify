@@ -36,12 +36,13 @@ import {
 import { Label } from '@/components/ui/label';
 
 interface ImagePreviewCardProps {
-  id: string; // Database ID (UUID)
-  src: string; // Full public URL for display
-  url: string; // Full public URL for display/copy (same as src for this component)
-  name: string; // filename on disk (e.g., uniqueId-sanitizedName.ext)
-  uploaderId: string; // userId from the image record
-  originalName: string; // Original filename from upload
+  id: string; 
+  src: string; 
+  url: string; 
+  name: string; 
+  uploaderId: string; 
+  originalName: string; 
+  folderName: string; 
   onDelete?: (imageDbId: string) => void;
   onRename?: (oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => void;
 }
@@ -49,7 +50,7 @@ interface ImagePreviewCardProps {
 const initialDeleteState: DeleteImageActionState = { success: false };
 const initialRenameState: RenameImageActionState = { success: false };
 
-export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName, onDelete, onRename }: ImagePreviewCardProps) {
+export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName, folderName, onDelete, onRename }: ImagePreviewCardProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [isCopied, setIsCopied] = useState(false);
@@ -57,11 +58,9 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
   const [fullUrl, setFullUrl] = useState('');
   
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  // Initialize newNameInput with the current name without extension from the 'name' prop (which is filename on disk)
   const [newNameInput, setNewNameInput] = useState(name.substring(0, name.lastIndexOf('.')));
 
   useEffect(() => {
-    // Update newNameInput if the 'name' prop changes (e.g., after a successful rename)
     setNewNameInput(name.substring(0, name.lastIndexOf('.')));
   }, [name]);
 
@@ -70,7 +69,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
 
   useEffect(() => {
     const timer = setTimeout(() => setIsVisible(true), 50);
-    // The 'url' prop is already the full public URL
     setFullUrl(url); 
     return () => clearTimeout(timer);
   }, [url]);
@@ -87,7 +85,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
   useEffect(() => {
     if (!isRenamePending && renameActionState.success && renameActionState.data) {
       toast({ title: 'Image Renamed', description: `Renamed to "${renameActionState.data.newName}".` });
-      // id (db id) doesn't change, newName is new filename, newUrl is new full URL
       if (onRename) onRename(id, renameActionState.data.newId, renameActionState.data.newName, renameActionState.data.newUrl);
       setIsRenameDialogOpen(false); 
     } else if (!isRenamePending && renameActionState.error) {
@@ -109,7 +106,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
   };
 
   const handleDelete = () => {
-    // deleteImage action now takes the database ID directly
     startTransition(() => {
         deleteFormAction(id); 
     });
@@ -121,7 +117,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
         return;
     }
     const formData = new FormData();
-    formData.append('currentImageId', id); // Pass the database ID
+    formData.append('currentImageId', id); 
     formData.append('newNameWithoutExtension', newNameInput.trim());
     startTransition(() => {
         renameFormAction(formData);
@@ -143,7 +139,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
           <div className="flex items-center space-x-1">
             <Dialog open={isRenameDialogOpen} onOpenChange={(open) => {
               setIsRenameDialogOpen(open);
-              if (open) { // Reset input when dialog opens
+              if (open) { 
                 setNewNameInput(name.substring(0, name.lastIndexOf('.')));
               }
             }}>

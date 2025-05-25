@@ -9,7 +9,7 @@ import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { 
     getUserImages, 
-    type UserImageData, // Using the new type for DB data
+    type UserImageData, 
     createFolderAction, 
     listUserFolders,
     type UserFolder,
@@ -41,15 +41,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// This interface should align with UserImageData for consistency, or UserImageData can be used directly
 interface DisplayImage {
-  id: string; // Database ID (UUID)
-  name: string; // filename on disk
-  previewSrc: string; // Full public URL
-  url: string; // Full public URL
-  uploaderId: string; // userId
+  id: string; 
+  name: string; 
+  previewSrc: string; 
+  url: string; 
+  uploaderId: string; 
   folderName: string;
-  originalName: string; // Original filename from upload
+  originalName: string; 
 }
 
 const initialImageFolderActionState: ImageFolderActionResponse = { success: false };
@@ -118,13 +117,12 @@ export default function MyImagesPage() {
     }
     setIsLoadingImages(true);
     try {
-      // getUserImages now returns UserImageData[] from DB
       const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
-        id: img.id, // DB ID
-        name: img.name, // filename on disk
-        previewSrc: img.url, // full public URL
-        url: img.url, // full public URL
+        id: img.id, 
+        name: img.name, 
+        previewSrc: img.url, 
+        url: img.url, 
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName,
@@ -239,7 +237,6 @@ export default function MyImagesPage() {
   }, []);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
-    // newImageDbId is same as oldImageDbId
     setUserImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
@@ -391,13 +388,14 @@ export default function MyImagesPage() {
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
              {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
               <ImagePreviewCard
-                key={image.id} // DB ID
+                key={image.id} 
                 id={image.id}
                 src={image.previewSrc}
                 url={image.url}
-                name={image.name} // filename on disk
+                name={image.name} 
                 uploaderId={image.uploaderId}
                 originalName={image.originalName}
+                folderName={image.folderName}
                 onDelete={handleImageDelete}
                 onRename={handleImageRename}
               />

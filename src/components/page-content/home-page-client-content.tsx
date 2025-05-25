@@ -4,11 +4,11 @@
 
 import React, { useState, useCallback, useEffect, ReactNode, useMemo } from 'react';
 import Image from 'next/image';
-import { ImageUploader, type UploadedImageFile as ClientUploadedImageFile } from '@/components/image-uploader';
+import { ImageUploader } from '@/components/image-uploader'; // Removed ClientUploadedImageFile import
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
-import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions'; // UserImageData for DB structure
+import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions'; 
 import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
@@ -25,16 +25,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Folder, Image as ImageIconLucide } from 'lucide-react';
+import type { UploadedImageServerData } from '@/app/actions/imageActions'; // Import the correct type
 
-// This interface now matches UserImageData more closely
 interface DisplayImage {
-  id: string; // Database ID (UUID)
-  name: string; // filename on disk
-  previewSrc: string; // Full public URL
-  url: string; // Full public URL
-  uploaderId: string; // userId
+  id: string; 
+  name: string; 
+  previewSrc: string; 
+  url: string; 
+  uploaderId: string; 
   folderName: string;
-  originalName: string; // Original filename from upload
+  originalName: string; 
 }
 
 const LATEST_IMAGES_COUNT = 8;
@@ -82,13 +82,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
     setIsLoadingInitialImages(true);
     try {
-      // Fetch images from the default folder for the "Latest Images" section
       const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
-        id: img.id, // DB ID
-        name: img.name, // filename on disk
-        previewSrc: img.url, // full public URL
-        url: img.url, // full public URL
+        id: img.id, 
+        name: img.name, 
+        previewSrc: img.url, 
+        url: img.url, 
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName,
@@ -121,34 +120,27 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
   }, [needsImageFetch, authLoading, fetchLatestUserImages]);
 
-  // Updated ClientUploadedImageFile to match UploadedImageServerData from imageActions
-  const handleImageUpload = useCallback((imageFile: {
-      id: string; name: string; url: string; originalName: string; userId: string; folderName: string; mimeType: string; size: number;
-  }) => {
-    // If the uploaded image was to the default folder, re-fetch to update the "Latest Images"
-    if (user && imageFile.folderName === DEFAULT_FOLDER_NAME) {
+  const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
+    if (user) {
         fetchLatestUserImages();
     }
-    // No direct optimistic update here for simplicity, rely on re-fetch
   }, [user, fetchLatestUserImages]);
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
-    // Optionally re-fetch if you want to ensure the list count is accurate from server
     if (user) fetchLatestUserImages();
   }, [user, fetchLatestUserImages]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
-    // newImageDbId is the same as oldImageDbId because DB ID doesn't change
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl } // Update filename and URLs
+          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl } 
           : image
       )
     );
-    if (user) fetchLatestUserImages(); // Re-fetch to confirm
+    if (user) fetchLatestUserImages(); 
   }, [user, fetchLatestUserImages]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
@@ -258,13 +250,14 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id} // DB ID is unique
+                    key={image.id} 
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
-                    name={image.name} // filename on disk
+                    name={image.name} 
                     uploaderId={image.uploaderId}
                     originalName={image.originalName}
+                    folderName={image.folderName}
                     onDelete={handleImageDelete}
                     onRename={handleImageRename}
                   />
