@@ -16,6 +16,7 @@ import {
 } from '@/app/actions/settingsActions';
 import { Loader2, Image as ImageIcon, UserPlus, UserX } from 'lucide-react'; // Added UserPlus, UserX
 import { Separator } from '../ui/separator';
+import { cn } from '@/lib/utils'; // Added import for cn
 
 interface SettingsFormProps {
   initialMaxUploadSizeMB: number;
