@@ -44,7 +44,8 @@ async function UserManagementSection() {
 }
 
 async function SiteSettingsSection() {
-  const settingsResponse = await getCurrentSettingsAction();
+  // getCurrentSettingsAction is already refactored to use Prisma via getAllSiteSettingsForAdmin
+  const settingsResponse = await getCurrentSettingsAction(); 
   
   if (!settingsResponse.success || 
       settingsResponse.currentMaxUploadSizeMB === undefined ||
@@ -75,8 +76,8 @@ async function SiteSettingsSection() {
       <CardContent>
         <SettingsForm 
             initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB} 
-            initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null}
-            initialRegistrationsEnabled={settingsResponse.currentRegistrationsEnabled} // Pass the new setting
+            initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null} // Ensure null if undefined
+            initialRegistrationsEnabled={settingsResponse.currentRegistrationsEnabled}
         />
       </CardContent>
     </Card>

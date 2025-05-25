@@ -2,100 +2,102 @@
 // src/lib/settingsService.ts
 'use server';
 
-import fs from 'fs/promises';
-import path from 'path';
+import prisma from '@/lib/prisma';
 
-const SETTINGS_FILE_PATH = path.join(process.cwd(), 'server-settings.json');
-const DEFAULT_MAX_UPLOAD_SIZE_MB = 6; 
+const DEFAULT_MAX_UPLOAD_SIZE_MB = 6;
 const DEFAULT_HOMEPAGE_IMAGE_URL = "https://placehold.co/300x200.png";
 const DEFAULT_REGISTRATIONS_ENABLED = true;
+const SETTINGS_ROW_ID = 1; // For the single-row settings table
 
 export interface SiteSettings {
+  id?: number; // id is present in the DB model
   maxUploadSizeMB: number;
   homepageImageUrl?: string | null;
   registrationsEnabled: boolean;
+  updatedAt?: Date; // updatedAt is present in the DB model
 }
 
-async function readSettings(): Promise<SiteSettings> {
-  try {
-    await fs.access(SETTINGS_FILE_PATH);
-    const data = await fs.readFile(SETTINGS_FILE_PATH, 'utf-8');
-    const settings = JSON.parse(data) as Partial<SiteSettings>;
-    return {
-      maxUploadSizeMB: typeof settings.maxUploadSizeMB === 'number' ? settings.maxUploadSizeMB : DEFAULT_MAX_UPLOAD_SIZE_MB,
-      homepageImageUrl: typeof settings.homepageImageUrl === 'string' ? settings.homepageImageUrl : DEFAULT_HOMEPAGE_IMAGE_URL,
-      registrationsEnabled: typeof settings.registrationsEnabled === 'boolean' ? settings.registrationsEnabled : DEFAULT_REGISTRATIONS_ENABLED,
-    };
-  } catch (error) {
-    console.warn('Settings file not found or corrupted, using default settings. Error:', error);
-    const defaultSettings: SiteSettings = {
+async function getSettings(): Promise<SiteSettings> {
+  let settings = await prisma.siteSetting.findUnique({
+    where: { id: SETTINGS_ROW_ID },
+  });
+
+  if (!settings) {
+    console.warn('Site settings not found in database, creating with defaults.');
+    try {
+      settings = await prisma.siteSetting.create({
+        data: {
+          id: SETTINGS_ROW_ID,
+          maxUploadSizeMB: DEFAULT_MAX_UPLOAD_SIZE_MB,
+          homepageImageUrl: DEFAULT_HOMEPAGE_IMAGE_URL,
+          registrationsEnabled: DEFAULT_REGISTRATIONS_ENABLED,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to create default site settings in database:', error);
+      // Fallback to in-memory defaults if DB creation fails
+      return {
         maxUploadSizeMB: DEFAULT_MAX_UPLOAD_SIZE_MB,
         homepageImageUrl: DEFAULT_HOMEPAGE_IMAGE_URL,
         registrationsEnabled: DEFAULT_REGISTRATIONS_ENABLED,
-    };
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        try {
-            await writeSettings(defaultSettings);
-            console.log('Created default server-settings.json');
-            return defaultSettings;
-        } catch (writeError) {
-            console.error('Failed to create default server-settings.json:', writeError);
-        }
+      };
     }
-    return defaultSettings;
   }
+  // Ensure all fields are present even if fetched from DB
+  return {
+    id: settings.id,
+    maxUploadSizeMB: settings.maxUploadSizeMB,
+    homepageImageUrl: settings.homepageImageUrl,
+    registrationsEnabled: settings.registrationsEnabled,
+    updatedAt: settings.updatedAt,
+  };
 }
 
-async function writeSettings(settings: SiteSettings): Promise<void> {
+async function updateSettings(newSettings: Partial<Omit<SiteSettings, 'id' | 'updatedAt'>>): Promise<SiteSettings> {
   try {
-    const settingsToWrite = {
-        ...settings,
-        homepageImageUrl: settings.homepageImageUrl === undefined ? null : settings.homepageImageUrl,
-        registrationsEnabled: typeof settings.registrationsEnabled === 'boolean' ? settings.registrationsEnabled : DEFAULT_REGISTRATIONS_ENABLED,
-    };
-    await fs.writeFile(SETTINGS_FILE_PATH, JSON.stringify(settingsToWrite, null, 2), 'utf-8');
+    const settings = await prisma.siteSetting.upsert({
+      where: { id: SETTINGS_ROW_ID },
+      update: newSettings,
+      create: {
+        id: SETTINGS_ROW_ID,
+        maxUploadSizeMB: newSettings.maxUploadSizeMB ?? DEFAULT_MAX_UPLOAD_SIZE_MB,
+        homepageImageUrl: newSettings.homepageImageUrl === undefined ? DEFAULT_HOMEPAGE_IMAGE_URL : newSettings.homepageImageUrl,
+        registrationsEnabled: newSettings.registrationsEnabled ?? DEFAULT_REGISTRATIONS_ENABLED,
+      },
+    });
+    return settings;
   } catch (error) {
-    console.error("Failed to write settings file:", error);
+    console.error("Failed to update site settings in database:", error);
     throw new Error("Server error: Could not save site settings.");
   }
 }
 
 export async function getMaxUploadSizeMB(): Promise<number> {
-  const settings = await readSettings();
+  const settings = await getSettings();
   return settings.maxUploadSizeMB;
 }
 
 export async function setMaxUploadSizeMB(sizeMB: number): Promise<void> {
-  if (typeof sizeMB !== 'number' || sizeMB <= 0 || sizeMB > 100) { 
+  if (typeof sizeMB !== 'number' || sizeMB <= 0 || sizeMB > 100) {
     throw new Error('Invalid upload size. Must be a positive number, typically not exceeding 100MB.');
   }
-  const currentSettings = await readSettings();
-  const newSettings: SiteSettings = {
-    ...currentSettings,
-    maxUploadSizeMB: sizeMB,
-  };
-  await writeSettings(newSettings);
+  await updateSettings({ maxUploadSizeMB: sizeMB });
 }
 
 export async function getHomepageImageUrl(): Promise<string> {
-  const settings = await readSettings();
-  return settings.homepageImageUrl || DEFAULT_HOMEPAGE_IMAGE_URL;
+  const settings = await getSettings();
+  return settings.homepageImageUrl || DEFAULT_HOMEPAGE_IMAGE_URL; // Fallback if null in DB
 }
 
 export async function setHomepageImageUrl(imageUrl: string | null): Promise<void> {
   if (imageUrl && !imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
     throw new Error('Invalid image URL. Must start with http:// or https://.');
   }
-  const currentSettings = await readSettings();
-  const newSettings: SiteSettings = {
-    ...currentSettings,
-    homepageImageUrl: imageUrl, 
-  };
-  await writeSettings(newSettings);
+  await updateSettings({ homepageImageUrl: imageUrl });
 }
 
 export async function getRegistrationsEnabled(): Promise<boolean> {
-  const settings = await readSettings();
+  const settings = await getSettings();
   return settings.registrationsEnabled;
 }
 
@@ -103,10 +105,10 @@ export async function setRegistrationsEnabled(isEnabled: boolean): Promise<void>
   if (typeof isEnabled !== 'boolean') {
     throw new Error('Invalid value for registrationsEnabled. Must be true or false.');
   }
-  const currentSettings = await readSettings();
-  const newSettings: SiteSettings = {
-    ...currentSettings,
-    registrationsEnabled: isEnabled,
-  };
-  await writeSettings(newSettings);
+  await updateSettings({ registrationsEnabled: isEnabled });
+}
+
+// This function is for the admin dashboard to fetch all settings at once
+export async function getAllSiteSettingsForAdmin(): Promise<SiteSettings> {
+    return getSettings();
 }

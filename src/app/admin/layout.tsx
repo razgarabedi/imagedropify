@@ -1,3 +1,4 @@
+
 // src/app/admin/layout.tsx
 import type { ReactNode } from 'react';
 import { getCurrentUserAction } from '@/app/actions/authActions';
@@ -20,9 +21,7 @@ export default async function AdminLayout({
     return null; 
   }
 
-  if (user.role !== 'admin') {
-    // Not an admin, show an access denied message or redirect to home
-    // For simplicity, redirecting to home. A dedicated access denied page would be better.
+  if (user.role !== 'Admin') { // Role check for 'Admin' (capitalized as per enum)
      return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
         <ShieldAlert className="w-16 h-16 text-destructive mb-4" />
