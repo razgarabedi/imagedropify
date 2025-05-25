@@ -1,7 +1,7 @@
 
 # ImageDrop: Local Image Hosting & Sharing Platform
 
-ImageDrop is a Next.js application designed for easy image uploading, folder organization, and sharing. It features local authentication and file storage, an administrator dashboard for user and site management, and a user approval workflow.
+ImageDrop is a Next.js application designed for easy image uploading, folder organization, and sharing. It features local authentication and file storage (migrating to PostgreSQL), an administrator dashboard for user and site management, and a user approval workflow.
 
 **NOTE:** This project uses PostgreSQL with Prisma for database management.
 
@@ -11,7 +11,7 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 *   **Folder Management:** Logged-in users can create folders to organize their images and upload directly to specific folders.
 *   **Image Management:** Users can view, rename, and delete their own uploaded images.
 *   **Folder Sharing:** Users can generate unique, shareable public links for their custom folders.
-*   **Database-backed Authentication:**
+*   **Database-backed Authentication (PostgreSQL + Prisma):**
     *   User accounts are managed in a PostgreSQL database.
     *   Password hashing (bcrypt) is implemented.
     *   Sessions are managed using JWTs stored in HTTP-only cookies.
@@ -26,7 +26,7 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
         *   Approve pending user registrations.
         *   Reject (ban) users.
         *   Unban users (sets status back to `pending` for re-approval).
-        *   Delete users (this also deletes their uploaded images and folders).
+        *   Delete users (this also deletes their uploaded images and folders from the filesystem).
     *   **User-Specific Limits:**
         *   Set maximum number of images a user can upload.
         *   Set maximum single upload file size (MB) for a user (overrides global).
@@ -85,17 +85,20 @@ This application uses PostgreSQL as its database and Prisma as its ORM.
         ```
 
 3.  **Set `DATABASE_URL` Environment Variable:**
-    *   Create a `.env.local` file in the root of your project if it doesn't exist.
-    *   Update the `DATABASE_URL` with your PostgreSQL connection string.
+    *   Create a file named `.env.local` in the **root directory** of your project (the same directory as `package.json` and the `prisma` folder) if it doesn't already exist.
+    *   Add or update the `DATABASE_URL` in `.env.local` with your PostgreSQL connection string.
         Format: `DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@YOUR_HOST:YOUR_PORT/YOUR_DATABASE_NAME?schema=public"`
         Example using the user and database created above (assuming PostgreSQL is running on localhost, port 5432):
         `DATABASE_URL="postgresql://imagedrop_user:your_secure_password@localhost:5432/imagedrop?schema=public"`
+    *   **CRITICAL:** Ensure this `DATABASE_URL` is correctly set *before* running Prisma migrations. Prisma CLI needs this variable to connect to your database.
 
 4.  **Run Prisma Migrations:**
     Apply the database schema defined in `prisma/schema.prisma`:
     ```bash
-    npx prisma migrate dev --name init 
+    npx prisma migrate dev --name init
     ```
+    If you encounter an error like `P1012: Environment variable not found: DATABASE_URL`, it means Prisma could not find your `DATABASE_URL`. Double-check your `.env.local` file and ensure it's correctly set and saved in the project root.
+
     If deploying to production, you would typically use:
     ```bash
     npx prisma migrate deploy
@@ -155,7 +158,7 @@ pm2 --version
 sudo mkdir -p /var/www/imagedrop
 # Change ownership to your deployment user (e.g., 'ubuntu' or your non-root user)
 # THIS USER WILL RUN THE PM2 PROCESS. Let's call this `node_user`.
-sudo chown $USER:$USER /var/www/imagedrop 
+sudo chown $USER:$USER /var/www/imagedrop
 cd /var/www/imagedrop
 
 # Clone your repository
@@ -174,7 +177,7 @@ Create a `.env.local` file in the root of your project (`/var/www/imagedrop/.env
 nano .env.local
 ```
 
-Add the following, **replacing placeholders**:
+Add the following, **replacing placeholders with your actual values**:
 
 ```ini
 # For Local Authentication (JWT Sessions) - REQUIRED
@@ -199,7 +202,7 @@ npx prisma generate
 
 # Run Database Migrations (to create/update tables)
 # For the first deployment or if schema changes are expected:
-npx prisma migrate deploy 
+npx prisma migrate deploy
 # If it's a very first setup and you need to create the initial migration:
 # npx prisma migrate dev --name initial_migration_name (then use 'deploy' for subsequent updates)
 
@@ -250,10 +253,10 @@ sudo setfacl -dR -m u:www-data:rx public/uploads   # Default for new items (ensu
 # 4. Nginx traversal permissions for parent directories
 # Nginx (www-data) needs execute (x) permission to traverse the path to served files.
 # These might already be permissive enough on standard Ubuntu setups.
-sudo chmod o+x /var 
-sudo chmod o+x /var/www 
-sudo chmod o+x /var/www/imagedrop 
-sudo chmod o+x /var/www/imagedrop/public 
+sudo chmod o+x /var
+sudo chmod o+x /var/www
+sudo chmod o+x /var/www/imagedrop
+sudo chmod o+x /var/www/imagedrop/public
 # For public/uploads and its children, ACLs (or group permissions) should handle www-data's 'rx' access.
 
 # Verify (example for ACL method):
@@ -263,7 +266,7 @@ sudo chmod o+x /var/www/imagedrop/public
 ```
 **Important Notes on Permissions:**
 *   Replace `node_user` with the actual username that will run the `pm2` process.
-*   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` command is critical.
+*   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` command is critical for new files/folders to inherit correct permissions for Nginx.
 *   The application code attempts to set permissions `0o755` for directories and `0o644` for files during creation. This acts as a fallback.
 *   If issues persist, use `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/.../image.png` immediately after an upload to trace permissions for each component of the path for the `www-data` user.
 
@@ -330,18 +333,17 @@ server {
         # Aggressive cache-busting for newly uploaded files
         expires -1; # Equivalent to Cache-Control: no-cache
         add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0";
-        
+
         # Try to disable Nginx's own file caching mechanisms for this location
-        open_file_cache off; 
-        sendfile off; 
+        open_file_cache off;
+        sendfile off;
 
         # Only allow specific image types and deny others
         location ~* \.(jpg|jpeg|png|gif|webp)$ {
             try_files $uri $uri/ =404; # Serve the image or return 404 if not found
-            # Add any specific headers for images if needed, e.g., longer expires for browsers
-            # expires 7d; 
         }
-        location ~ ^/uploads/ { # Deny access to non-image files in /uploads/
+        # Deny access to any other file types or directory listings in /uploads/
+        location ~ ^/uploads/ {
              deny all;
              return 403; # Or 404 if you prefer to hide existence
         }
@@ -482,7 +484,7 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
     CustomLog ${APACHE_LOG_DIR}/imagedrop_access.log combined
 
     # Set to match or exceed Next.js bodySizeLimit (e.g., 10MB = 10485760 bytes)
-    LimitRequestBody 10485760 
+    LimitRequestBody 10485760
 
     ProxyPreserveHost On
     ProxyRequests Off # Important for reverse proxy
@@ -504,12 +506,12 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
         <FilesMatch "\.(?i:jpg|jpeg|png|gif|webp)$">
             Require all granted
         </FilesMatch>
-        
+
         # Cache-busting headers for uploaded images
         Header set Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0"
         Header unset ETag # Optional: further ensure no conditional requests based on ETag
         FileETag None    # Optional: further ensure no conditional requests based on ETag
-        
+
         # Security header
         Header set X-Content-Type-Options "nosniff"
     </Directory>
@@ -574,7 +576,7 @@ sudo certbot renew --dry-run # Test renewal
             *   **Action**: Immediately after failed upload:
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
-                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png> 
+                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
                 # And parent directories
                 ```
                 Ensure `www-data` has `r-x` on directories, `r--` on file. Default ACLs are key.
@@ -613,17 +615,17 @@ sudo certbot renew --dry-run # Test renewal
     *   **Option B: psql (Command Line)**
         Connect to your PostgreSQL database using `psql`:
         ```bash
-        sudo -u postgres psql -d imagedrop 
+        sudo -u postgres psql -d imagedrop
         # Or if you created a specific user: psql -U imagedrop_user -d imagedrop -W (it will prompt for password)
         ```
         Then run the following SQL commands:
         ```sql
         DELETE FROM "FolderShare";
         DELETE FROM "SiteSetting";
-        DELETE FROM "User"; 
+        DELETE FROM "User";
         -- To reset auto-incrementing IDs if necessary (optional, Prisma handles UUIDs fine without this for User/FolderShare)
         -- For SiteSetting if it uses an auto-incrementing ID and you want it to start from 1 again:
-        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1; 
+        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1;
         ```
         Exit `psql` with `\q`.
     *   **Option C: Full Reset (Drop Tables & Re-migrate - Use with caution)**
@@ -641,7 +643,7 @@ sudo certbot renew --dry-run # Test renewal
 3.  **Clear Uploaded Files:**
     Navigate to your application directory:
     ```bash
-    cd /var/www/imagedrop 
+    cd /var/www/imagedrop
     ```
     Delete all user upload subdirectories and their contents:
     ```bash
@@ -653,12 +655,10 @@ sudo certbot renew --dry-run # Test renewal
     sudo chown node_user:node_user public/uploads/users # Replace node_user with your PM2 user
     # Re-apply default ACLs if you are using them
     # sudo setfacl -dR -m u:node_user:rwx public/uploads
-    # sudo setfacl -dR -m u:www-data:rx public/uploads 
+    # sudo setfacl -dR -m u:www-data:rx public/uploads
     ```
 
 4.  **Restart Application:** `pm2 start imagedrop`
     *   The next user to sign up will become the admin. Default site settings will be applied by the application if the `SiteSetting` table is empty (the application logic handles seeding this).
 
 Your ImageDrop application should now be running with your chosen web server and a fresh PostgreSQL database!
-
-    
