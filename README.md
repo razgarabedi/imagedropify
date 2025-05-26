@@ -492,6 +492,22 @@ sudo systemctl restart nginx
     sudo firewall-cmd --list-all
     ```
 
+### 10.b. (Ubuntu Specific) Check AppArmor
+
+AppArmor is a security module on Ubuntu. Default Nginx/Apache profiles usually don't cause issues with serving files from `/var/www` or proxying to `localhost`. However, if you have custom or hardened AppArmor profiles, they could be a factor in permission-like issues.
+
+*   **Check AppArmor Status:**
+    ```bash
+    sudo aa-status
+    ```
+    This will show if AppArmor is active and list loaded profiles.
+*   **Check for Denials:** AppArmor denials are typically logged in `dmesg`, `/var/log/kern.log`, or `/var/log/syslog`.
+    ```bash
+    sudo dmesg | grep -i apparmor
+    sudo grep -i apparmor /var/log/syslog
+    ```
+    If you see denials related to Nginx (`usr.sbin.nginx`) or Apache (`usr.sbin.apache2`) accessing files in `/var/www/imagedrop/public/uploads/` or connecting to `localhost:3000`, you may need to adjust the AppArmor profile for your web server. Modifying AppArmor profiles is an advanced topic; consult the Ubuntu AppArmor documentation. For most standard setups, this step is usually not needed.
+
 ### 11. (Optional) Secure Nginx with SSL using Certbot
 
 If you have a domain, enable HTTPS:
@@ -516,6 +532,7 @@ sudo certbot renew --dry-run # Test renewal
 If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow Nginx to make network connections to proxy to your Next.js app (port 3000) and access files in `/var/www/imagedrop`.
 
 *   **Allow Nginx to connect to network (for proxying to Next.js on port 3000):**
+    This is critical if Nginx is blocked from connecting to `localhost:3000`.
     ```bash
     sudo setsebool -P httpd_can_network_connect 1
     ```
@@ -750,6 +767,22 @@ sudo apache2ctl configtest # Ubuntu
     sudo firewall-cmd --list-all
     ```
 
+### 10.b. (Ubuntu Specific) Check AppArmor
+
+AppArmor is a security module on Ubuntu. Default Apache/Nginx profiles usually don't cause issues with serving files from `/var/www` or proxying to `localhost`. However, if you have custom or hardened AppArmor profiles, they could be a factor in permission-like issues.
+
+*   **Check AppArmor Status:**
+    ```bash
+    sudo aa-status
+    ```
+    This will show if AppArmor is active and list loaded profiles.
+*   **Check for Denials:** AppArmor denials are typically logged in `dmesg`, `/var/log/kern.log`, or `/var/log/syslog`.
+    ```bash
+    sudo dmesg | grep -i apparmor
+    sudo grep -i apparmor /var/log/syslog
+    ```
+    If you see denials related to Apache (`usr.sbin.apache2`) or Nginx (`usr.sbin.nginx`) accessing files in `/var/www/imagedrop/public/uploads/` or connecting to `localhost:3000`, you may need to adjust the AppArmor profile for your web server. Modifying AppArmor profiles is an advanced topic; consult the Ubuntu AppArmor documentation. For most standard setups, this step is usually not needed.
+
 ### 11. (Optional) Secure Apache with SSL using Certbot
 
 If you have a domain:
@@ -815,7 +848,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
     *   **Primary Causes & Solutions (Similar to Nginx):**
         1.  **Ownership/Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
             *   **Action**: Immediately after failed upload:
-                Identify exact image path.
+                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for Apache user (replace `www-data` with `apache` if on CentOS):
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
