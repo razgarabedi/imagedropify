@@ -4,7 +4,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { stat } from 'fs/promises';
+// Removed unused import: import { stat } from 'fs/promises'; 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
@@ -78,7 +78,7 @@ export async function uploadImage(
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-      const cookieStore = await cookies();
+      const cookieStore = await cookies(); // Await cookies
       const tokenExists = cookieStore.has('session_token');
       if (!tokenExists) {
           return { success: false, error: 'Upload failed: Session token not found. Please log in.' };
@@ -156,10 +156,7 @@ export async function uploadImage(
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
     const diskFilename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH);
     
-    // filePathOnDisk is now users/[userId]/[folderName]/[diskFilename]
     const filePathOnDisk = path.join(uploadPathForFolder, diskFilename); 
-    
-    // urlPathForDb is now userId/folderName/diskFilename
     const urlPathForDb = path.join(userId, targetFolderName, diskFilename).split(path.sep).join('/');
 
     const resolvedFilePath = path.resolve(filePathOnDisk);
@@ -171,6 +168,14 @@ export async function uploadImage(
 
     try {
       await fs.writeFile(filePathOnDisk, buffer, { mode: 0o644 });
+
+      // Attempt to "touch" the file by stating it, to help ensure filesystem coherency.
+      try {
+        await fs.stat(filePathOnDisk);
+      } catch (statError: any) {
+        // Log if stat fails, but don't fail the entire upload for this.
+        console.warn(`Post-write fs.stat failed for ${filePathOnDisk} (Error: ${statError.message}). Continuing upload.`);
+      }
       
       if (POST_UPLOAD_DELAY_MS > 0) {
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
@@ -180,7 +185,7 @@ export async function uploadImage(
         data: {
           filename: diskFilename,
           originalName: file.name,
-          urlPath: urlPathForDb, // Store the relative path: userId/folderName/diskFilename
+          urlPath: urlPathForDb, 
           mimeType: file.type,
           size: file.size,
           folderName: targetFolderName,
@@ -195,6 +200,12 @@ export async function uploadImage(
       return { success: true, data: imageRecord };
     } catch (error: any) {
       console.error('Failed to save file to disk or database:', filePathOnDisk, error);
+      // Attempt to clean up the file if DB write fails
+      try {
+        await fs.unlink(filePathOnDisk);
+      } catch (cleanupError) {
+        console.error(`Failed to cleanup orphaned file ${filePathOnDisk} after DB error:`, cleanupError);
+      }
       return { success: false, error: 'Failed to save file or its metadata.' };
     }
   } catch (e: any) {
@@ -204,7 +215,7 @@ export async function uploadImage(
 }
 
 export interface UserImageData extends PrismaImage {
-  url: string; // Ensure full public URL is part of this interface
+  url: string; 
 }
 
 export async function getUserImages(
@@ -212,19 +223,24 @@ export async function getUserImages(
   limit?: number, 
   targetFolderName?: string | null
 ): Promise<UserImageData[]> {
-  const userId = userIdFromSession || await getCurrentUserIdFromSession();
-  if (!userId) {
-    console.log("getUserImages: No userId provided or found in session.");
+  const userIdToQuery = userIdFromSession || await getCurrentUserIdFromSession();
+  if (!userIdToQuery) {
+    // console.log("getUserImages: No userId provided or found in session."); // Can be noisy
     return [];
   }
 
-  const whereClause: any = { userId };
+  const whereClause: any = { userId: userIdToQuery };
   if (targetFolderName !== undefined && targetFolderName !== null) {
     whereClause.folderName = targetFolderName;
   } else if (targetFolderName === undefined) { 
-    whereClause.folderName = DEFAULT_FOLDER_NAME;
+    // If targetFolderName is explicitly undefined (not null), assume default folder behavior was intended for some contexts
+    // This case may need review based on how it's called. Typically, null means all folders.
+    // For safety, let's assume if it's undefined, it might be from an old call pattern.
+    // If we want to fetch all images for a user, targetFolderName should be explicitly null.
+     whereClause.folderName = DEFAULT_FOLDER_NAME; // Defaulting to one folder if undefined
   }
-  // If targetFolderName is null, fetch all images for the user.
+  // If targetFolderName is explicitly null, the whereClause for folderName is omitted, fetching from all user's folders.
+
 
   try {
     const imagesFromDb = await prisma.image.findMany({
@@ -237,10 +253,10 @@ export async function getUserImages(
 
     return imagesFromDb.map(img => ({
       ...img,
-      url: `/uploads/users/${img.urlPath}`, // Construct full URL from stored urlPath
+      url: `/uploads/users/${img.urlPath}`, 
     }));
   } catch (error) {
-    console.error(`Failed to fetch images for user ${userId} from database:`, error);
+    console.error(`Failed to fetch images for user ${userIdToQuery} from database:`, error);
     return [];
   }
 }
@@ -274,8 +290,11 @@ export async function countUserImages(userId: string, targetFolderName?: string 
   
   const whereClause: any = { userId };
   if (targetFolderName !== undefined && targetFolderName !== null) {
+    // Only add folderName to whereClause if it's explicitly provided and not null
+    // If targetFolderName is null, we count all images for the user.
     whereClause.folderName = targetFolderName;
   }
+
 
   try {
     return await prisma.image.count({ where: whereClause });
@@ -293,11 +312,11 @@ export interface DeleteImageActionState {
 
 export async function deleteImage(
   prevState: DeleteImageActionState,
-  imageDbId: string
+  imageDbId: string 
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-     const cookieStore = await cookies();
+     const cookieStore = await cookies(); // Await cookies
      const tokenExists = cookieStore.has('session_token');
      if (!tokenExists) {
          return { success: false, error: 'Delete failed: Session token not found. Please log in.' };
@@ -306,8 +325,8 @@ export async function deleteImage(
      }
   }
 
-  if (typeof imageDbId !== 'string' || !imageDbId) {
-    console.error(`Security alert: Invalid imageDbId. User: ${requestingUserId}, ID: ${imageDbId}`);
+  if (typeof imageDbId !== 'string' || !imageDbId.trim() || imageDbId.includes('..') || imageDbId.includes('/')) {
+    console.error(`Security alert: Invalid imageDbId for deletion. User: ${requestingUserId}, ID: ${imageDbId}`);
     return { success: false, error: 'Invalid image ID format.' };
   }
   
@@ -325,7 +344,6 @@ export async function deleteImage(
       return { success: false, error: 'Unauthorized: You can only delete your own images.' };
     }
 
-    // imageRecord.urlPath is now userId/folderName/filename.ext
     const fullServerPath = path.join(UPLOAD_DIR_BASE_PUBLIC, imageRecord.urlPath);
     
     const resolvedFullServerPath = path.resolve(fullServerPath);
@@ -333,23 +351,26 @@ export async function deleteImage(
 
     if (!resolvedFullServerPath.startsWith(resolvedUploadBase + path.sep) &&
         !resolvedFullServerPath.startsWith(resolvedUploadBase + path.win32.sep) ||
-        resolvedFullServerPath === resolvedUploadBase ) { // Check against base to avoid deleting it
+        resolvedFullServerPath === resolvedUploadBase ) { 
         console.error(`Security alert: Attempt to delete file outside base uploads directory or the base directory itself. Path: ${fullServerPath}`);
         return { success: false, error: 'Invalid file path for deletion.' };
     }
 
+    // Delete DB record first
     await prisma.image.delete({
       where: { id: imageDbId },
     });
 
+    // Then delete file from disk
     try {
-      await fs.access(fullServerPath);
+      await fs.access(fullServerPath); // Check if file exists before attempting to delete
       await fs.unlink(fullServerPath);
     } catch (fsError: any) {
       if (fsError.code === 'ENOENT') {
         console.warn(`File ${fullServerPath} not found on disk for image ID ${imageDbId}, but DB record deleted.`);
       } else {
         console.error(`Failed to delete file ${fullServerPath} from disk for image ID ${imageDbId}:`, fsError);
+        // Potentially re-throw or handle if file deletion failure is critical despite DB deletion
       }
     }
 
@@ -379,7 +400,7 @@ export async function renameImage(
 ): Promise<RenameImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    const cookieStore = await cookies();
+    const cookieStore = await cookies(); // Await cookies
     const tokenExists = cookieStore.has('session_token');
     if (!tokenExists) {
         return { success: false, error: 'Rename failed: Session token not found. Please log in.' };
@@ -391,9 +412,13 @@ export async function renameImage(
   const currentImageDbId = formData.get('currentImageId') as string | null; 
   const newNameWithoutExtension = formData.get('newNameWithoutExtension') as string | null;
 
-  if (!currentImageDbId || !newNameWithoutExtension) {
-    return { success: false, error: 'Missing current image ID or new name.' };
+  if (!currentImageDbId || typeof currentImageDbId !== 'string' || !currentImageDbId.trim() || currentImageDbId.includes('..') || currentImageDbId.includes('/')) {
+    return { success: false, error: 'Invalid current image ID format.' };
   }
+  if (!newNameWithoutExtension || typeof newNameWithoutExtension !== 'string') {
+    return { success: false, error: 'New name is missing or invalid.' };
+  }
+
 
   const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); 
   if (!sanitizedNewName) {
@@ -427,18 +452,25 @@ export async function renameImage(
     newDiskFilename = newDiskFilename.substring(0, MAX_FILENAME_LENGTH);
 
     if (newDiskFilename === oldDiskFilename) {
-      return { success: false, error: 'New name is the same as the old name.' };
+      // No actual change in filename after sanitization and prefixing.
+      // Could return current name if desired, or treat as no-op.
+      return { 
+        success: true, 
+        data: { 
+            newId: imageRecord.id, // Return existing ID
+            newName: imageRecord.filename, 
+            newUrl: `/uploads/users/${imageRecord.urlPath}`,
+        } 
+      };
     }
-
-    // imageRecord.urlPath is userId/folderName/oldDiskFilename
+    
     const pathParts = imageRecord.urlPath.split('/');
-    if (pathParts.length < 3) { // userId, folderName, filename
+    if (pathParts.length < 3) { 
         return { success: false, error: 'Invalid image URL path structure in database.' };
     }
     const storedUserId = pathParts[0];
     const storedFolderName = pathParts[1];
     
-    // The directory on disk is public/uploads/users/[userId]/[folderName]
     const physicalDirectoryPath = path.join(UPLOAD_DIR_BASE_PUBLIC, storedUserId, storedFolderName);
 
     const oldFullPathOnDisk = path.join(physicalDirectoryPath, oldDiskFilename);
@@ -456,18 +488,25 @@ export async function renameImage(
     await fs.access(oldFullPathOnDisk); 
     try {
       await fs.access(newFullPathOnDisk);
+      // If newFullPathOnDisk exists, it's a conflict.
       return { success: false, error: `A file named "${newDiskFilename}" already exists in this location.` };
     } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e;
+      if (e.code !== 'ENOENT') throw e; // Re-throw if it's not a "file not found" error
+      // If ENOENT, it means newFullPathOnDisk does NOT exist, which is good, we can proceed.
     }
 
     await fs.rename(oldFullPathOnDisk, newFullPathOnDisk);
     
-    if (POST_UPLOAD_DELAY_MS > 0) {
+    // Optional: add fs.stat and delay here too if experiencing issues with rename visibility
+    try {
+      await fs.stat(newFullPathOnDisk);
+    } catch (statError: any) {
+      console.warn(`Post-rename fs.stat failed for ${newFullPathOnDisk} (Error: ${statError.message}). Continuing update.`);
+    }
+    if (POST_UPLOAD_DELAY_MS > 0) { // Consider if delay is needed for rename too
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
     }
 
-    // New urlPathForDb is userId/folderName/newDiskFilename
     const newUrlPathForDb = path.join(storedUserId, storedFolderName, newDiskFilename).split(path.sep).join('/');
 
     const updatedImageRecord = await prisma.image.update({
@@ -485,7 +524,7 @@ export async function renameImage(
     return { 
         success: true, 
         data: { 
-            newId: updatedImageRecord.id,
+            newId: updatedImageRecord.id, // id in DB doesn't change on update
             newName: updatedImageRecord.filename, 
             newUrl: `/uploads/users/${updatedImageRecord.urlPath}`,
         } 
@@ -514,7 +553,7 @@ export async function createFolderAction(
 ): Promise<FolderActionResponse> {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-        const cookieStore = await cookies();
+        const cookieStore = await cookies(); // Await cookies
         const tokenExists = cookieStore.has('session_token');
         if (!tokenExists) {
             return { success: false, error: 'Folder creation failed: Session token not found. Please log in.' };
@@ -531,7 +570,6 @@ export async function createFolderAction(
         return { success: false, error: 'Invalid characters in folder name or name too long.' };
     }
 
-    // Physical path for the folder itself
     const folderPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, newFolderName);
     const resolvedFolderPath = path.resolve(folderPath);
     const resolvedUserBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId));
@@ -559,16 +597,16 @@ export async function createFolderAction(
     }
 
     try {
-        // ensureUploadDirsExist creates users/[userId]/[folderName]
-        await ensureUploadDirsExist(userId, newFolderName);
+        await ensureUploadDirsExist(userId, newFolderName); // This creates users/[userId]/[folderName] with 0o755
         revalidatePath('/my-images');
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
-        if (error.code === 'EEXIST') { // This check might now be handled by ensureUploadDirsExist's internal mkdir
-            return { success: false, error: `Folder "${newFolderName}" already exists.` };
-        }
-        console.error(`Failed to create folder ${folderPath}:`, error);
-        return { success: false, error: 'Failed to create folder on server.' };
+        // ensureUploadDirsExist already handles mkdir errors robustly.
+        // Check if it's specifically a folder already exists scenario, though ensureUploadDirsExist might not throw EEXIST if it just confirms existence.
+        // For now, rely on ensureUploadDirsExist's error or success.
+        // A more specific check for existing folder could be added here if needed, e.g., by trying fs.stat before calling ensureUploadDirsExist
+        console.error(`Failed to create folder ${folderPath}:`, error); // Log the actual error
+        return { success: false, error: error.message || 'Failed to create folder on server.' };
     }
 }
 
@@ -597,7 +635,6 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         
     } catch (error: any) {
         if (error.code === 'ENOENT') { 
-          // If user's base directory doesn't exist, that's fine, means no folders yet.
         } else {
             console.error(`Error listing folders for user ${userId}:`, error);
         }
