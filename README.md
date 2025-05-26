@@ -186,36 +186,65 @@ sudo npm install pm2 -g
 pm2 --version
 ```
 
+### 2.b. Create a Deployment User (Optional but Recommended)
+
+It's best practice to run your Node.js application under a dedicated, non-root user for security. Let's call this user `node_user`.
+
+*   **For Ubuntu:**
+    ```bash
+    sudo adduser node_user
+    # Optionally, add to sudo group if this user needs to perform admin tasks (be cautious)
+    sudo usermod -aG sudo node_user
+    # Switch to the new user for subsequent steps:
+    su - node_user
+    ```
+
+*   **For CentOS:**
+    ```bash
+    sudo adduser node_user
+    sudo passwd node_user # You'll be prompted to set a password
+    # Optionally, add to wheel group for sudo privileges (be cautious)
+    sudo usermod -aG wheel node_user
+    # Switch to the new user for subsequent steps:
+    su - node_user
+    ```
+**From this point on, commands for installing dependencies, building the app, and managing PM2 should ideally be run as this `node_user`. If you use `sudo` for any of these, ensure file ownership is corrected afterwards.** We'll refer to this user as `your_deployment_user` or `node_user`.
+
 ### 3. Clone Application & Install Dependencies
+
+**Ensure you are running commands as your `node_user` if you created one.** If you are `root`, you will need to `chown` files later.
 
 ```bash
 # Create application directory (adjust path if needed)
 sudo mkdir -p /var/www/imagedrop
-# Change ownership to your deployment user (e.g., 'ubuntu', 'centos', or your non-root user)
-# THIS USER WILL RUN THE PM2 PROCESS. Let's call this `node_user`.
-# Example: replace 'your_deployment_user' with 'ubuntu' or 'centos' or your specific user.
-sudo chown your_deployment_user:your_deployment_user /var/www/imagedrop
+# Change ownership to your deployment user (e.g., 'node_user', 'ubuntu', 'centos').
+# THIS USER WILL RUN THE PM2 PROCESS.
+sudo chown node_user:node_user /var/www/imagedrop # Assuming you created 'node_user'
+
+# If you are not already the node_user, switch now:
+# su - node_user
+# cd /var/www/imagedrop
+
+# If you are already node_user and in the correct directory:
 cd /var/www/imagedrop
 
 # Clone your repository
 git clone <your_repository_url> .
 # Or, if you've copied files manually, ensure they are in /var/www/imagedrop
 
-# Install dependencies (run as your_deployment_user if possible, or chown again after if run as root)
-# If you did `cd /var/www/imagedrop` as root, then run:
-# npm install
-# sudo chown -R your_deployment_user:your_deployment_user /var/www/imagedrop # Ensure node_user owns node_modules
-# If you did `su - your_deployment_user` then `cd /var/www/imagedrop`:
+# Install dependencies (run as node_user)
 npm install
 ```
+If `npm install` was run as `root` for some reason, ensure `node_user` owns `node_modules`:
+`sudo chown -R node_user:node_user /var/www/imagedrop`
 
 ### 4. Configure Environment Variables
 
 Create a `.env.local` file in the root of your project (`/var/www/imagedrop/.env.local`):
-**Ensure `your_deployment_user` can read this file.**
+**Ensure `node_user` can read this file.**
 
 ```bash
-# As your_deployment_user:
+# As node_user:
 nano .env.local # Or vi, or your preferred editor
 ```
 
@@ -237,10 +266,8 @@ DATABASE_URL="postgresql://imagedrop_user:your_secure_password@localhost:5432/im
 ### 5. Build the Application & Run Database Migrations
 
 ```bash
+# As node_user:
 cd /var/www/imagedrop
-
-# Run these commands as your_deployment_user if possible.
-# If not, ensure files are chowned back to your_deployment_user after.
 
 # Generate Prisma Client (should happen on npm install via postinstall, but good to ensure)
 npx prisma generate
@@ -253,10 +280,9 @@ npx prisma migrate deploy
 
 # Build the Next.js application
 npm run build
-
-# If build was run as root, ensure your_deployment_user owns the .next directory
-# sudo chown -R your_deployment_user:your_deployment_user /var/www/imagedrop/.next
 ```
+If the build was run as `root`, ensure `node_user` owns the `.next` directory:
+`sudo chown -R node_user:node_user /var/www/imagedrop/.next`
 
 ### 6. Initial Admin User
 
@@ -265,17 +291,21 @@ npm run build
 ### 7. Set File Ownership and Permissions (Focus on `public/uploads`)
 
 **CRITICAL:** Correct permissions are essential for security and operation.
-The Node.js application (run by PM2) **MUST** execute as your designated non-root deployment user (e.g., `ubuntu`, `centos`, `your_deployment_user`). Let's call this the `node_user`. Nginx typically runs as `www-data` (Ubuntu) or `nginx` (CentOS). **Replace `www-data` with `nginx` if you are on CentOS in the commands below.**
+The Node.js application (run by PM2) **MUST** execute as your designated non-root deployment user (`node_user`). Nginx typically runs as `www-data` (Ubuntu) or `nginx` (CentOS). **Replace `www-data` with `nginx` if you are on CentOS in the commands below.**
 
 ```bash
+# These commands are typically run as root or with sudo.
+# Ensure 'node_user' is the user you created and will run PM2.
+
 cd /var/www/imagedrop
 
 # 1. Node User owns all project files.
-# Replace 'node_user' with the actual username that will run PM2 (e.g., 'ubuntu', 'centos')
 sudo chown -R node_user:node_user /var/www/imagedrop
 
 # 2. Set secure base permissions for the project directory
 sudo chmod 750 /var/www/imagedrop # Owner: rwx, Group: rx, Others: ---
+# (If 'node_user' is not in the same group as 'www-data' or 'nginx', and you're not using ACLs for this level,
+# you might need 'sudo chmod 755 /var/www/imagedrop' to allow 'other' execute.)
 
 # 3. Permissions for `public/uploads` directory
 #    - `node_user` (running PM2) needs `rwx` to create `users/<userId>/<folderName>/` and write images.
@@ -296,9 +326,9 @@ sudo chown -R node_user:node_user public/uploads
 # The -dR flag sets default ACLs for NEW files/dirs created within public/uploads. THIS IS CRUCIAL.
 # Replace 'www-data' with 'nginx' if on CentOS
 sudo setfacl -R -m u:node_user:rwx public/uploads
-sudo setfacl -R -m u:www-data:rx public/uploads
+sudo setfacl -R -m u:www-data:rx public/uploads # Replace www-data with nginx if on CentOS
 sudo setfacl -dR -m u:node_user:rwx public/uploads
-sudo setfacl -dR -m u:www-data:rx public/uploads
+sudo setfacl -dR -m u:www-data:rx public/uploads # Replace www-data with nginx if on CentOS
 
 # 4. Nginx traversal permissions for parent directories
 # Nginx user (`www-data` or `nginx`) needs execute (x) permission to traverse the path to served files.
@@ -308,10 +338,9 @@ sudo chmod o+x /var/www     # Common, usually okay
 # For /var/www/imagedrop and /var/www/imagedrop/public, ensure group or other 'x' is set, 
 # or that www-data/nginx is in node_user's group (if not using ACLs for this level).
 # With ACLs, the specific setfacl for www-data:rx on public/uploads handles deeper traversal for Nginx.
-# If not using ACLs extensively, you might need something like:
-# sudo chmod g+x /var/www/imagedrop
-# sudo chmod g+x /var/www/imagedrop/public
-# (And ensure www-data/nginx is in node_user's group)
+# If not using ACLs extensively for the project root:
+# sudo chmod g+x /var/www/imagedrop # If Nginx user is in the same group as node_user
+# sudo chmod o+x /var/www/imagedrop # Or, if Nginx user is 'other'
 
 # Verify (example for ACL method, replace www-data with nginx if on CentOS):
 # getfacl /var/www/imagedrop/public/uploads
@@ -319,7 +348,7 @@ sudo chmod o+x /var/www     # Common, usually okay
 # Ensure Nginx user (www-data/nginx) has 'r-x' on directories and 'r--' on the image file.
 ```
 **Important Notes on Permissions & Ownership:**
-*   Replace `node_user` with the actual username that will run the `pm2` process.
+*   Ensure `node_user` is the actual username that will run the `pm2` process.
 *   Replace `www-data` with `nginx` in `setfacl` commands if you are on CentOS.
 *   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` (or `nginx` user) command is critical for new files/folders to inherit correct permissions for Nginx.
 *   The application code attempts to set permissions `0o755` for directories and `0o644` for files during creation. This acts as a fallback if ACLs are not perfectly set up but **will not override ownership**.
@@ -327,10 +356,10 @@ sudo chmod o+x /var/www     # Common, usually okay
 
 ### 8. Start Application with PM2
 
-**CRITICAL: Run PM2 commands as the `node_user` you designated for file ownership (e.g., `ubuntu`, `centos`). DO NOT run `pm2 start` as `root` unless you fully understand the implications and have a specific reason (which is generally not recommended for web apps).**
+**CRITICAL: Run PM2 commands as the `node_user` you designated for file ownership. DO NOT run `pm2 start` as `root`.**
 
 ```bash
-# First, switch to your node_user if you are root
+# First, ensure you are the node_user
 # su - node_user 
 # (Or ensure your current shell session is as node_user)
 
@@ -486,7 +515,7 @@ sudo certbot renew --dry-run # Test renewal
 
 If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow Nginx to make network connections to proxy to your Next.js app (port 3000) and access files in `/var/www/imagedrop`.
 
-*   **Allow Nginx to connect to network (for proxying):**
+*   **Allow Nginx to connect to network (for proxying to Next.js on port 3000):**
     ```bash
     sudo setsebool -P httpd_can_network_connect 1
     ```
@@ -510,9 +539,9 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     ```bash
     sudo ausearch -m avc -ts recent
     # or
-    sudo cat /var/log/audit/audit.log | audit2allow -m local_nginx_policy
+    # sudo cat /var/log/audit/audit.log | audit2allow -m local_nginx_policy
     ```
-    This can help identify specific permissions Nginx is being denied by SELinux.
+    This can help identify specific permissions Nginx is being denied by SELinux. For example, if you see `denied { name_connect } for ... dest=3000`, it means Nginx is blocked from connecting to port 3000. `sudo setsebool -P httpd_can_network_connect 1` should fix this.
 
 ### 13. Security Considerations Summary (Nginx)
 
@@ -525,7 +554,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 *   **Input Validation**: Server actions use Zod (already in place).
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
-*   **SELinux (CentOS)**: Configure appropriately if enabled.
+*   **SELinux (CentOS)**: Configure appropriately if enabled, especially `httpd_can_network_connect`.
 
 ### 14. Troubleshooting (Nginx)
 
@@ -533,7 +562,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     *   Verify `DATABASE_URL` in `/var/www/imagedrop/.env.local`.
     *   Check `pm2 logs imagedrop` (as `node_user`) for database connection errors.
     *   Ensure PostgreSQL is running and accessible (firewall, `pg_hba.conf`).
-    *   On CentOS, check SELinux logs (`ausearch -m avc -ts recent`) if Node.js can't connect to DB.
+    *   On CentOS, check SELinux logs (`ausearch -m avc -ts recent`) if Node.js can't connect to DB, or if Nginx can't connect to Node.js app on port 3000 (`httpd_can_network_connect`).
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Nginx is NOT serving the static image from `/uploads/`. Request is proxied to Next.js, which returns HTML (likely 404).
     *   **Primary Causes & Solutions:**
@@ -555,11 +584,11 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
         3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`).
         4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server.
         5.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in `/uploads/` block are correctly set and Nginx reloaded.
-        6.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files or proxying. Check `ausearch -m avc -ts recent`.
+        6.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files. Check `ausearch -m avc -ts recent`. The `httpd_sys_content_t` context might be needed for `/var/www/imagedrop`.
     *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit` in `next.config.ts`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`).
-*   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify it can connect to the database. SELinux might also block Nginx proxying to port 3000 (see Step 12).
+*   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify it can connect to the database. SELinux might also block Nginx proxying to port 3000 (see Step 12, ensure `httpd_can_network_connect` is `on`).
 
 ### 15. Updating the Application (Nginx)
 
@@ -576,22 +605,28 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 
 ## Deployment on Ubuntu/CentOS with Apache & PM2
 
-This guide outlines deploying ImageDrop on a Linux server using Apache as a reverse proxy and PM2 as a process manager. Steps 1-6 (Prerequisites, Node/PM2, App Clone, Env Vars, Build & DB Migrations, Initial Admin User) are largely similar to the Nginx setup. **Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`.**
+This guide outlines deploying ImageDrop on a Linux server using Apache as a reverse proxy and PM2 as a process manager. 
+**Prerequisites (Steps 1 & 2.a from Nginx section):** Ensure Node.js, npm, PM2 are installed.
+**Create Deployment User (Step 2.b from Nginx section):** Create `node_user`.
+**Database Setup:** Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`.
 
-**Follow Steps 1-6 from the Nginx section first, ensuring database setup and `DATABASE_URL` is correctly set in `.env.local`.** Then proceed with Apache-specific steps, paying close attention to running PM2 as your `node_user`.
+**Follow Steps 1-6 from the Nginx section first (Prerequisites, Node/PM2, Create Deployment User, App Clone, Env Vars, Build & DB Migrations, Initial Admin User), ensuring database setup and `DATABASE_URL` is correctly set in `.env.local`. Then proceed with Apache-specific steps, paying close attention to running PM2 as your `node_user`.**
 
 ### 7. Set File Ownership and Permissions (Focus on `public/uploads`) for Apache
 
 Follow Step 7 from the Nginx deployment section, but replace the Nginx user (`www-data` or `nginx`) with the Apache user.
 *   On **Ubuntu**, Apache usually runs as `www-data` (same as Nginx).
 *   On **CentOS**, Apache usually runs as `apache`.
-    *   So for CentOS with Apache, ACL commands would be like:
+    *   So for CentOS with Apache, ACL commands would be like (run with `sudo`):
         ```bash
-        sudo setfacl -R -m u:node_user:rwx public/uploads
-        sudo setfacl -R -m u:apache:rx public/uploads
-        sudo setfacl -dR -m u:node_user:rwx public/uploads
-        sudo setfacl -dR -m u:apache:rx public/uploads
+        # Ensure 'node_user' is the user running PM2.
+        # Ensure 'apache' is the user Apache runs as on CentOS.
+        setfacl -R -m u:node_user:rwx /var/www/imagedrop/public/uploads
+        setfacl -R -m u:apache:rx /var/www/imagedrop/public/uploads
+        setfacl -dR -m u:node_user:rwx /var/www/imagedrop/public/uploads
+        setfacl -dR -m u:apache:rx /var/www/imagedrop/public/uploads
         ```
+    *   For Ubuntu with Apache, replace `apache` with `www-data` in the commands above.
 
 ### 8. Start Application with PM2 (for Apache)
 
@@ -737,9 +772,9 @@ sudo certbot renew --dry-run # Test renewal
 
 ### 12. (CentOS Specific) SELinux Configuration for Apache
 
-If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache can proxy and access files.
+If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'll need to ensure Apache can proxy and access files.
 
-*   **Allow Apache to connect to network (for proxying):**
+*   **Allow Apache to connect to network (for proxying to Next.js on port 3000):**
     ```bash
     sudo setsebool -P httpd_can_network_connect 1
     ```
@@ -758,6 +793,7 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
     ```bash
     sudo ausearch -m avc -ts recent
     ```
+    Look for denials related to `httpd_t` accessing port 3000 or files in `/var/www/imagedrop`.
 
 ### 13. Security Considerations Summary (Apache)
 
@@ -765,11 +801,11 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
 *   **`JWT_SECRET_KEY`**: Strong and unique in `.env.local`.
 *   **PM2 User**: Run PM2 as a non-root `node_user`.
 *   **File Ownership**: `node_user` should own application files and `public/uploads`.
-*   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7 from Nginx section, replacing Nginx user with Apache user where appropriate).
+*   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7, adapting for Apache user).
 *   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security.
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
-*   **SELinux (CentOS)**: Configure if enabled.
+*   **SELinux (CentOS)**: Configure if enabled, especially `httpd_can_network_connect`.
 
 ### 14. Troubleshooting (Apache)
 
@@ -789,11 +825,11 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
         3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache.
         4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**.
         5.  **Apache Caching**: Ensure cache-busting headers are set.
-        6.  **SELinux (CentOS)**: Check `ausearch -m avc -ts recent`.
+        6.  **SELinux (CentOS)**: Check `ausearch -m avc -ts recent`. Ensure `httpd_sys_content_t` is on relevant directories and `httpd_can_network_connect` is `on`.
     *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` (Ubuntu) or `/var/log/httpd/imagedrop_error_log` (CentOS).
     *   **Body Size Limits:** Check Apache `LimitRequestBody` vs. Next.js `bodySizeLimit`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`).
-*   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify database connectivity. SELinux might block Apache proxying.
+*   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify database connectivity. SELinux might block Apache proxying (check `httpd_can_network_connect`).
 
 ### 15. Updating the Application (Apache)
 
@@ -816,6 +852,7 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
 2.  **Reset Database (using Prisma Studio or psql):**
     *   **Option A: Prisma Studio (Interactive)**
         ```bash
+        # Run as node_user from /var/www/imagedrop
         npx prisma studio
         ```
         Then, in the Prisma Studio web interface, navigate to the `User`, `SiteSetting`, `Image`, and `FolderShare` models and delete all records.
@@ -839,6 +876,7 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
     *   **Option C: Full Reset (Drop Tables & Re-migrate - Use with caution)**
         If you want a complete reset of the schema and data:
         ```bash
+        # Run as node_user from /var/www/imagedrop
         # This drops DB, reapplies migrations, and runs seed (if any)
         npx prisma migrate reset --force
         # OR if you want to control it more:
@@ -849,6 +887,7 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
 3.  **Clear Uploaded Files:**
     Navigate to your application directory:
     ```bash
+    # As root or with sudo
     cd /var/www/imagedrop
     ```
     Delete all user upload subdirectories and their contents:
@@ -861,7 +900,7 @@ If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache 
     sudo chown node_user:node_user public/uploads/users # Replace node_user with your PM2 user
     # Re-apply default ACLs if you are using them (replace www-data with nginx or apache user as appropriate)
     # sudo setfacl -dR -m u:node_user:rwx public/uploads/users
-    # sudo setfacl -dR -m u:www-data:rx public/uploads/users
+    # sudo setfacl -dR -m u:www-data:rx public/uploads/users # Or u:nginx:rx or u:apache:rx
     ```
 
 4.  **Restart Application:** `pm2 start imagedrop` (as `node_user`)
