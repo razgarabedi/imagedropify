@@ -4,7 +4,6 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-// Removed unused import: import { stat } from 'fs/promises'; 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import prisma from '@/lib/prisma';
@@ -21,6 +20,8 @@ import {
 } from '@/lib/imageConfig';
 
 const UPLOAD_DIR_BASE_PUBLIC = path.join(process.cwd(), 'public/uploads/users');
+const MAX_FILE_ACCESS_RETRY_MS = 5000; // Max 5 seconds to wait for file access by Node.js process
+const FILE_ACCESS_RETRY_INTERVAL_MS = 200; // Check every 200ms
 
 // Ensures upload directories exist: public/uploads/users/[userId]/[folderName]
 async function ensureUploadDirsExist(userId: string, folderName: string): Promise<string> {
@@ -38,14 +39,12 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   const resolvedUserFolderSpecificPath = path.resolve(userFolderSpecificPath);
   const resolvedUserBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId));
 
-  // Security check: Ensure the target folder is within the user's base directory
   if (!resolvedUserFolderSpecificPath.startsWith(resolvedUserBase + path.sep) && 
       !resolvedUserFolderSpecificPath.startsWith(resolvedUserBase + path.win32.sep)) {
       console.error(`Security alert: Attempt to create directory outside designated user folder area. Path: ${userFolderSpecificPath}, UserID: ${userId}, Folder: ${folderName}`);
       throw new Error('Path is outside allowed directory for user folder uploads.');
   }
   
-  // Create the base user directory first if it doesn't exist
   try {
     await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
   } catch (error) {
@@ -53,7 +52,6 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
     throw new Error(`Failed to prepare base user upload directory: ${resolvedUserBase}. Check server logs and directory permissions.`);
   }
 
-  // Then create the specific folder within the user's directory
   try {
     await fs.mkdir(resolvedUserFolderSpecificPath, { recursive: true, mode: 0o755 });
   } catch (error) {
@@ -78,7 +76,7 @@ export async function uploadImage(
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-      const cookieStore = await cookies(); // Await cookies
+      const cookieStore = await cookies(); 
       const tokenExists = cookieStore.has('session_token');
       if (!tokenExists) {
           return { success: false, error: 'Upload failed: Session token not found. Please log in.' };
@@ -111,8 +109,8 @@ export async function uploadImage(
     
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
     const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
-    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
-                                ? userMaxSingleUploadSizeMB
+    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadMB !== undefined
+                                ? userMaxSingleUploadMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -132,7 +130,7 @@ export async function uploadImage(
         }
     }
 
-    let uploadPathForFolder: string; // Full path to users/[userId]/[folderName]
+    let uploadPathForFolder: string; 
     try {
       uploadPathForFolder = await ensureUploadDirsExist(userId, targetFolderName);
     } catch (error: any) {
@@ -168,16 +166,42 @@ export async function uploadImage(
 
     try {
       await fs.writeFile(filePathOnDisk, buffer, { mode: 0o644 });
+      console.log(`File ${filePathOnDisk} written successfully with mode 0o644.`);
 
-      // Attempt to "touch" the file by stating it, to help ensure filesystem coherency.
+      // Actively wait for file to be accessible by the Node process
+      let fileAccessible = false;
+      const startTime = Date.now();
+      while (!fileAccessible && (Date.now() - startTime) < MAX_FILE_ACCESS_RETRY_MS) {
+        try {
+          await fs.access(filePathOnDisk, fs.constants.R_OK); // Check for read access
+          fileAccessible = true;
+          console.log(`File ${filePathOnDisk} is accessible for reading by Node.js process after ${Date.now() - startTime}ms.`);
+          break;
+        } catch (accessError: any) {
+          if (accessError.code === 'ENOENT') {
+            console.warn(`File ${filePathOnDisk} not yet found by fs.access (ENOENT), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
+          } else {
+             console.warn(`File ${filePathOnDisk} not yet accessible by fs.access (Error: ${accessError.message}), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
+          }
+          await new Promise(resolve => setTimeout(resolve, FILE_ACCESS_RETRY_INTERVAL_MS));
+        }
+      }
+
+      if (!fileAccessible) {
+        console.error(`File ${filePathOnDisk} was not accessible by Node.js process after ${MAX_FILE_ACCESS_RETRY_MS}ms. Upload will proceed, but immediate access issues by web server are likely.`);
+        // Optionally, you could fail the upload here if strict accessibility is required:
+        // return { success: false, error: `Server error: Uploaded file not accessible after ${MAX_FILE_ACCESS_RETRY_MS / 1000}s.` };
+      }
+
       try {
-        await fs.stat(filePathOnDisk);
+        const stats = await fs.stat(filePathOnDisk);
+        console.log(`fs.stat successful for ${filePathOnDisk} after write and access checks. Size: ${stats.size}`);
       } catch (statError: any) {
-        // Log if stat fails, but don't fail the entire upload for this.
         console.warn(`Post-write fs.stat failed for ${filePathOnDisk} (Error: ${statError.message}). Continuing upload.`);
       }
       
       if (POST_UPLOAD_DELAY_MS > 0) {
+        console.log(`Applying POST_UPLOAD_DELAY_MS of ${POST_UPLOAD_DELAY_MS}ms.`);
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
       }
       
@@ -195,12 +219,11 @@ export async function uploadImage(
 
       revalidatePath('/');
       revalidatePath('/my-images');
-      revalidatePath(`/admin/dashboard`);
+      revalidatePath(`/admin/dashboard`); // For user storage/image count updates
 
       return { success: true, data: imageRecord };
     } catch (error: any) {
       console.error('Failed to save file to disk or database:', filePathOnDisk, error);
-      // Attempt to clean up the file if DB write fails
       try {
         await fs.unlink(filePathOnDisk);
       } catch (cleanupError) {
@@ -225,7 +248,6 @@ export async function getUserImages(
 ): Promise<UserImageData[]> {
   const userIdToQuery = userIdFromSession || await getCurrentUserIdFromSession();
   if (!userIdToQuery) {
-    // console.log("getUserImages: No userId provided or found in session."); // Can be noisy
     return [];
   }
 
@@ -233,15 +255,9 @@ export async function getUserImages(
   if (targetFolderName !== undefined && targetFolderName !== null) {
     whereClause.folderName = targetFolderName;
   } else if (targetFolderName === undefined) { 
-    // If targetFolderName is explicitly undefined (not null), assume default folder behavior was intended for some contexts
-    // This case may need review based on how it's called. Typically, null means all folders.
-    // For safety, let's assume if it's undefined, it might be from an old call pattern.
-    // If we want to fetch all images for a user, targetFolderName should be explicitly null.
-     whereClause.folderName = DEFAULT_FOLDER_NAME; // Defaulting to one folder if undefined
+     whereClause.folderName = DEFAULT_FOLDER_NAME; 
   }
-  // If targetFolderName is explicitly null, the whereClause for folderName is omitted, fetching from all user's folders.
-
-
+  
   try {
     const imagesFromDb = await prisma.image.findMany({
       where: whereClause,
@@ -290,11 +306,8 @@ export async function countUserImages(userId: string, targetFolderName?: string 
   
   const whereClause: any = { userId };
   if (targetFolderName !== undefined && targetFolderName !== null) {
-    // Only add folderName to whereClause if it's explicitly provided and not null
-    // If targetFolderName is null, we count all images for the user.
     whereClause.folderName = targetFolderName;
   }
-
 
   try {
     return await prisma.image.count({ where: whereClause });
@@ -316,7 +329,7 @@ export async function deleteImage(
 ): Promise<DeleteImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-     const cookieStore = await cookies(); // Await cookies
+     const cookieStore = await cookies(); 
      const tokenExists = cookieStore.has('session_token');
      if (!tokenExists) {
          return { success: false, error: 'Delete failed: Session token not found. Please log in.' };
@@ -356,21 +369,18 @@ export async function deleteImage(
         return { success: false, error: 'Invalid file path for deletion.' };
     }
 
-    // Delete DB record first
     await prisma.image.delete({
       where: { id: imageDbId },
     });
 
-    // Then delete file from disk
     try {
-      await fs.access(fullServerPath); // Check if file exists before attempting to delete
+      await fs.access(fullServerPath); 
       await fs.unlink(fullServerPath);
     } catch (fsError: any) {
       if (fsError.code === 'ENOENT') {
         console.warn(`File ${fullServerPath} not found on disk for image ID ${imageDbId}, but DB record deleted.`);
       } else {
         console.error(`Failed to delete file ${fullServerPath} from disk for image ID ${imageDbId}:`, fsError);
-        // Potentially re-throw or handle if file deletion failure is critical despite DB deletion
       }
     }
 
@@ -400,7 +410,7 @@ export async function renameImage(
 ): Promise<RenameImageActionState> {
   const requestingUserId = await getCurrentUserIdFromSession();
   if (!requestingUserId) {
-    const cookieStore = await cookies(); // Await cookies
+    const cookieStore = await cookies(); 
     const tokenExists = cookieStore.has('session_token');
     if (!tokenExists) {
         return { success: false, error: 'Rename failed: Session token not found. Please log in.' };
@@ -418,7 +428,6 @@ export async function renameImage(
   if (!newNameWithoutExtension || typeof newNameWithoutExtension !== 'string') {
     return { success: false, error: 'New name is missing or invalid.' };
   }
-
 
   const sanitizedNewName = newNameWithoutExtension.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, MAX_FILENAME_LENGTH - 10); 
   if (!sanitizedNewName) {
@@ -452,12 +461,10 @@ export async function renameImage(
     newDiskFilename = newDiskFilename.substring(0, MAX_FILENAME_LENGTH);
 
     if (newDiskFilename === oldDiskFilename) {
-      // No actual change in filename after sanitization and prefixing.
-      // Could return current name if desired, or treat as no-op.
       return { 
         success: true, 
         data: { 
-            newId: imageRecord.id, // Return existing ID
+            newId: imageRecord.id, 
             newName: imageRecord.filename, 
             newUrl: `/uploads/users/${imageRecord.urlPath}`,
         } 
@@ -465,8 +472,9 @@ export async function renameImage(
     }
     
     const pathParts = imageRecord.urlPath.split('/');
-    if (pathParts.length < 3) { 
-        return { success: false, error: 'Invalid image URL path structure in database.' };
+    if (pathParts.length !== 3) { 
+        console.error(`Invalid image urlPath structure in DB for image ${imageRecord.id}: ${imageRecord.urlPath}`);
+        return { success: false, error: 'Internal server error: Invalid image path structure.' };
     }
     const storedUserId = pathParts[0];
     const storedFolderName = pathParts[1];
@@ -480,7 +488,11 @@ export async function renameImage(
     const resolvedOldPath = path.resolve(oldFullPathOnDisk);
     const resolvedNewPath = path.resolve(newFullPathOnDisk);
 
-    if (!resolvedOldPath.startsWith(resolvedUserBase + path.sep) || !resolvedNewPath.startsWith(resolvedUserBase + path.sep)) {
+    if (!resolvedOldPath.startsWith(resolvedUserBase + path.sep) &&
+        !resolvedOldPath.startsWith(resolvedUserBase + path.win32.sep) ||
+        !resolvedNewPath.startsWith(resolvedUserBase + path.sep) &&
+        !resolvedNewPath.startsWith(resolvedUserBase + path.win32.sep)
+    ) {
         console.error(`Security alert: Path outside designated user directory during rename. User: ${requestingUserId}`);
         return { success: false, error: 'Unauthorized attempt to rename file. Path is outside your allowed directory.' };
     }
@@ -488,22 +500,19 @@ export async function renameImage(
     await fs.access(oldFullPathOnDisk); 
     try {
       await fs.access(newFullPathOnDisk);
-      // If newFullPathOnDisk exists, it's a conflict.
       return { success: false, error: `A file named "${newDiskFilename}" already exists in this location.` };
     } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e; // Re-throw if it's not a "file not found" error
-      // If ENOENT, it means newFullPathOnDisk does NOT exist, which is good, we can proceed.
+      if (e.code !== 'ENOENT') throw e; 
     }
 
     await fs.rename(oldFullPathOnDisk, newFullPathOnDisk);
     
-    // Optional: add fs.stat and delay here too if experiencing issues with rename visibility
     try {
       await fs.stat(newFullPathOnDisk);
     } catch (statError: any) {
       console.warn(`Post-rename fs.stat failed for ${newFullPathOnDisk} (Error: ${statError.message}). Continuing update.`);
     }
-    if (POST_UPLOAD_DELAY_MS > 0) { // Consider if delay is needed for rename too
+    if (POST_UPLOAD_DELAY_MS > 0) { 
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
     }
 
@@ -524,7 +533,7 @@ export async function renameImage(
     return { 
         success: true, 
         data: { 
-            newId: updatedImageRecord.id, // id in DB doesn't change on update
+            newId: updatedImageRecord.id, 
             newName: updatedImageRecord.filename, 
             newUrl: `/uploads/users/${updatedImageRecord.urlPath}`,
         } 
@@ -553,7 +562,7 @@ export async function createFolderAction(
 ): Promise<FolderActionResponse> {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
-        const cookieStore = await cookies(); // Await cookies
+        const cookieStore = await cookies(); 
         const tokenExists = cookieStore.has('session_token');
         if (!tokenExists) {
             return { success: false, error: 'Folder creation failed: Session token not found. Please log in.' };
@@ -597,15 +606,11 @@ export async function createFolderAction(
     }
 
     try {
-        await ensureUploadDirsExist(userId, newFolderName); // This creates users/[userId]/[folderName] with 0o755
+        await ensureUploadDirsExist(userId, newFolderName); 
         revalidatePath('/my-images');
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
-        // ensureUploadDirsExist already handles mkdir errors robustly.
-        // Check if it's specifically a folder already exists scenario, though ensureUploadDirsExist might not throw EEXIST if it just confirms existence.
-        // For now, rely on ensureUploadDirsExist's error or success.
-        // A more specific check for existing folder could be added here if needed, e.g., by trying fs.stat before calling ensureUploadDirsExist
-        console.error(`Failed to create folder ${folderPath}:`, error); // Log the actual error
+        console.error(`Failed to create folder ${folderPath}:`, error); 
         return { success: false, error: error.message || 'Failed to create folder on server.' };
     }
 }
