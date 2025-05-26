@@ -357,6 +357,13 @@ sudo chmod o+x /var/www     # Common, usually okay
 ### 8. Start Application with PM2
 
 **CRITICAL: Run PM2 commands as the `node_user` you designated for file ownership. DO NOT run `pm2 start` as `root`.**
+If `pm2 list` (run as `node_user`) does not show your app, or if `sudo pm2 list` shows it running as `root`, you have started PM2 incorrectly.
+
+**If new files in `public/uploads/users/` are owned by `root:root` (check with `ls -l`), it means your PM2 process IS RUNNING AS `root`. This is incorrect and a security risk.**
+To fix this:
+1.  Stop and delete the PM2 process started as root: `sudo pm2 stop imagedrop && sudo pm2 delete imagedrop && sudo pm2 save`
+2.  Switch to your `node_user`: `su - node_user`
+3.  Then follow the steps below correctly.
 
 ```bash
 # First, ensure you are the node_user
@@ -564,7 +571,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 
 *   **`DATABASE_URL`**: Ensure it's correctly set in `.env.local` and secured.
 *   **`JWT_SECRET_KEY`**: Must be strong and unique in `.env.local`.
-*   **PM2 User**: Run PM2 as a non-root `node_user`.
+*   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own all application files and `public/uploads`.
 *   **File Permissions**: Critical for `public/uploads`. `node_user` needs write, Nginx user (`www-data` or `nginx`) needs read/execute. **Default ACLs (`setfacl -dR`) are vital.**
 *   **Nginx Configuration**: Review `/uploads/` location block for security (deny non-image files) and caching.
@@ -583,7 +590,8 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Nginx is NOT serving the static image from `/uploads/`. Request is proxied to Next.js, which returns HTML (likely 404).
     *   **Primary Causes & Solutions:**
-        1.  **Ownership/Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
+        1.  **PM2 Process Running as `root`**: If `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect and the most likely cause if file permissions seem to reset or be wrong for Nginx. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8).** Correct the PM2 setup and then fix ownership of existing `public/uploads` (see Step 7).
+        2.  **Ownership/Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
             *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
                 Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for the Nginx user (replace `www-data` with `nginx` if on CentOS):
@@ -597,7 +605,6 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
-        2.  **Files Owned by `root:root`**: If `namei -l` or `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8).** Correct the PM2 setup and then fix ownership of existing `public/uploads` (see Step 7).
         3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`).
         4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server.
         5.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in `/uploads/` block are correctly set and Nginx reloaded.
@@ -647,7 +654,7 @@ Follow Step 7 from the Nginx deployment section, but replace the Nginx user (`ww
 
 ### 8. Start Application with PM2 (for Apache)
 
-**CRITICAL: Follow Step 8 from the Nginx deployment section exactly.** Ensure PM2 is run as your non-root `node_user`.
+**CRITICAL: Follow Step 8 from the Nginx deployment section exactly.** Ensure PM2 is run as your non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 
 ### 9. Install and Configure Apache
 
@@ -832,7 +839,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
 
 *   **`DATABASE_URL`**: Secure and correct in `.env.local`.
 *   **`JWT_SECRET_KEY`**: Strong and unique in `.env.local`.
-*   **PM2 User**: Run PM2 as a non-root `node_user`.
+*   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own application files and `public/uploads`.
 *   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7, adapting for Apache user).
 *   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security.
@@ -846,7 +853,8 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Apache is NOT serving the static image from `/uploads/`. Request is proxied to Next.js.
     *   **Primary Causes & Solutions (Similar to Nginx):**
-        1.  **Ownership/Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
+        1.  **PM2 Process Running as `root`**: If `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect and the most likely cause if file permissions seem to reset or be wrong for Apache. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8 of Nginx section).** Correct the PM2 setup and then fix ownership of existing `public/uploads`.
+        2.  **Ownership/Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
             *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
                 Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for the Apache user (replace `www-data` with `apache` if on CentOS):
@@ -860,7 +868,6 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:apache`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `apache`) for parent directories is key for new files/folders created by `node_user`.**
-        2.  **Files Owned by `root:root`**: If new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8 of Nginx section).** Correct the PM2 setup and then fix ownership of existing `public/uploads`.
         3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache.
         4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**.
         5.  **Apache Caching**: Ensure cache-busting headers are set.
