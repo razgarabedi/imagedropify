@@ -4,7 +4,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useActionState, startTransition } from 'react';
 import Image from 'next/image';
-import { UploadCloud, Loader2, UserX } from 'lucide-react';
+import { UploadCloud, Loader2, UserX, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,90 +21,164 @@ interface ImageUploaderProps {
 }
 
 const initialUploadState: UploadImageActionState = { success: false };
+const CLIENT_MAX_FILE_SIZE_MB = 6; // 6MB per-file limit for client-side check
 
 export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploaderProps) {
   const { user, loading: authLoading } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [localPreviewSrc, setLocalPreviewSrc] = useState<string | null>(null);
-  const [localFileName, setLocalFileName] = useState<string | null>(null);
+  
+  const [fileQueue, setFileQueue] = useState<File[]>([]);
+  const [currentUploadingFile, setCurrentUploadingFile] = useState<File | null>(null);
+  const [currentPreviewSrc, setCurrentPreviewSrc] = useState<string | null>(null);
+  const [totalFilesQueued, setTotalFilesQueued] = useState(0);
+  const [completedFilesCount, setCompletedFilesCount] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const [actionState, formAction, isPending] = useActionState(uploadImage, initialUploadState);
 
-  const resetUploaderVisualState = useCallback(() => {
+  const resetUploaderVisualState = useCallback((isFullReset: boolean = true) => {
     setUploadProgress(0);
-    setLocalPreviewSrc(null);
-    setLocalFileName(null);
+    setCurrentUploadingFile(null);
+    setCurrentPreviewSrc(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    if (isFullReset) {
+        setFileQueue([]);
+        setTotalFilesQueued(0);
+        setCompletedFilesCount(0);
+    }
   }, []);
 
-  useEffect(() => {
-    if (!isPending && actionState.success && actionState.data) {
-      toast({
-        title: 'Image Uploaded!',
-        description: `${actionState.data.originalName} to folder "${actionState.data.folderName}".`,
-      });
-      onImageUpload(actionState.data);
-      resetUploaderVisualState();
-    } else if (!isPending && actionState.error) {
-      toast({
-        variant: 'destructive',
-        title: 'Upload Failed',
-        description: actionState.error,
-      });
-      setUploadProgress(0);
-    }
-  }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState]);
-
-
-  const handleFileSelected = useCallback((file: File | null) => {
-    if (!file) return;
-    if (isPending) return;
-
-    if (!user) {
-      toast({ variant: 'destructive', title: 'Authentication Required', description: 'Please login to upload images.' });
-      resetUploaderVisualState();
+  const processNextFile = useCallback(() => {
+    if (fileQueue.length === 0) {
+      if (totalFilesQueued > 0) { // All files processed
+        toast({ title: "Uploads Complete", description: `${completedFilesCount} of ${totalFilesQueued} files uploaded successfully.`});
+      }
+      resetUploaderVisualState(true);
       return;
     }
 
-    // Client-side file type validation
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      toast({
-        variant: 'destructive',
-        title: 'Invalid File Type',
-        description: `Accepted types: JPG, PNG, GIF, WebP. You provided: ${file.type || 'unknown'}`
-      });
-      resetUploaderVisualState();
-      return;
-    }
+    if (isPending) return; // Don't start a new upload if one is already pending
 
-    setLocalFileName(file.name);
+    const nextFile = fileQueue[0];
+    setCurrentUploadingFile(nextFile);
     setUploadProgress(5); // Simulate progress start
 
     const reader = new FileReader();
     reader.onloadend = () => {
-      setLocalPreviewSrc(reader.result as string);
+      setCurrentPreviewSrc(reader.result as string);
       const formData = new FormData();
-      formData.append('image', file);
+      formData.append('image', nextFile);
       if (currentFolderName) {
         formData.append('folderName', currentFolderName);
       }
-      // Simulate progress a bit more for UX before actual server action
-      setUploadProgress(30); 
+      setUploadProgress(30);
       startTransition(() => {
         formAction(formData);
       });
     };
     reader.onerror = () => {
-      toast({ variant: 'destructive', title: 'Error Reading File', description: 'Could not read selected file for preview.' });
-      resetUploaderVisualState();
+      toast({ variant: 'destructive', title: 'Error Reading File', description: `Could not read ${nextFile.name} for preview.` });
+      setFileQueue(prev => prev.slice(1)); // Remove problematic file
+      setCompletedFilesCount(prev => prev + 1); // Count as processed (though failed)
+      // processNextFile(); // Trigger next file processing immediately - No, actionState useEffect will handle it
     };
-    reader.readAsDataURL(file);
-  }, [isPending, formAction, resetUploaderVisualState, toast, user, currentFolderName]);
+    reader.readAsDataURL(nextFile);
+
+  }, [fileQueue, formAction, resetUploaderVisualState, toast, currentFolderName, isPending, totalFilesQueued, completedFilesCount]);
+
+
+  useEffect(() => {
+    if (!isPending && currentUploadingFile) { // An action has just completed
+      if (actionState.success && actionState.data) {
+        toast({
+          title: 'Image Uploaded!',
+          description: `${actionState.data.originalName} to folder "${actionState.data.folderName}".`,
+        });
+        onImageUpload(actionState.data);
+      } else if (actionState.error) {
+        toast({
+          variant: 'destructive',
+          title: `Upload Failed for ${currentUploadingFile.name}`,
+          description: actionState.error,
+        });
+      }
+      // Remove the processed file from the queue and trigger next
+      setFileQueue(prev => prev.slice(1));
+      setCompletedFilesCount(prev => prev + 1);
+      setCurrentUploadingFile(null); // Clear current file as it's processed
+    }
+  }, [actionState, isPending, onImageUpload, toast, currentUploadingFile]);
+  
+  // Effect to trigger processing the next file when the queue is updated and no upload is pending
+  useEffect(() => {
+    if (fileQueue.length > 0 && !isPending && !currentUploadingFile) {
+      processNextFile();
+    } else if (fileQueue.length === 0 && totalFilesQueued > 0 && !isPending && !currentUploadingFile) {
+      // This condition means all files are processed (queue empty, but total was > 0)
+      // and no action is currently pending and currentUploadingFile is cleared.
+      // Toast for completion is handled by processNextFile when it initially finds the queue empty after processing all.
+      resetUploaderVisualState(true);
+    }
+  }, [fileQueue, isPending, currentUploadingFile, processNextFile, totalFilesQueued, resetUploaderVisualState]);
+
+
+  const handleFilesSelected = useCallback((files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    if (isPending && fileQueue.length > 0) { // An upload sequence is already in progress
+        toast({ variant: 'default', title: 'Upload in Progress', description: 'Please wait for the current batch to complete before adding more files.' });
+        return;
+    }
+
+
+    if (!user) {
+      toast({ variant: 'destructive', title: 'Authentication Required', description: 'Please login to upload images.' });
+      resetUploaderVisualState(true);
+      return;
+    }
+    
+    const newValidFiles: File[] = [];
+    const rejectedFiles: {name: string, reason: string}[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+        rejectedFiles.push({name: file.name, reason: `Invalid file type. Accepted: JPG, PNG, GIF, WebP. Provided: ${file.type || 'unknown'}`});
+        continue;
+      }
+      if (file.size > CLIENT_MAX_FILE_SIZE_MB * 1024 * 1024) {
+        rejectedFiles.push({name: file.name, reason: `File too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Max allowed: ${CLIENT_MAX_FILE_SIZE_MB}MB per file.`});
+        continue;
+      }
+      newValidFiles.push(file);
+    }
+
+    if (rejectedFiles.length > 0) {
+        const rejectedMessages = rejectedFiles.map(rf => `${rf.name}: ${rf.reason}`).join('\n');
+        toast({
+            variant: 'destructive',
+            title: `${rejectedFiles.length} File(s) Rejected`,
+            description: <pre className="mt-2 w-full rounded-md bg-slate-950 p-4"><code className="text-white text-xs">{rejectedMessages}</code></pre>,
+            duration: 10000,
+        });
+    }
+
+    if (newValidFiles.length > 0) {
+      setFileQueue(prevQueue => [...prevQueue, ...newValidFiles]);
+      setTotalFilesQueued(prevTotal => prevTotal + newValidFiles.length);
+      if (!isPending && !currentUploadingFile) { // If not already uploading, start the process
+        // processNextFile(); // This will be triggered by the useEffect watching fileQueue
+      }
+    } else if (rejectedFiles.length > 0 && newValidFiles.length === 0) {
+      // All files were rejected, reset input if needed
+       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+
+  }, [isPending, user, toast, resetUploaderVisualState, currentUploadingFile, fileQueue.length]);
 
 
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
@@ -126,26 +200,26 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
     setIsDragging(false);
     if (isPending || !user || authLoading) return;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileSelected(e.dataTransfer.files[0]);
+      handleFilesSelected(e.dataTransfer.files);
       e.dataTransfer.clearData();
     }
   };
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) handleFileSelected(e.target.files[0]);
+    handleFilesSelected(e.target.files);
   };
   const triggerFileInput = () => {
-    if (isPending || !user || authLoading) return;
+    if ((isPending && fileQueue.length > 0) || !user || authLoading) return;
     fileInputRef.current?.click();
   };
 
   useEffect(() => {
-    const currentPreview = localPreviewSrc;
+    const currentPreview = currentPreviewSrc; // Changed from localPreviewSrc
     return () => { if (currentPreview && currentPreview.startsWith('blob:')) URL.revokeObjectURL(currentPreview); };
-  }, [localPreviewSrc]);
+  }, [currentPreviewSrc]);
 
   if (authLoading) {
     return (
-      <Card className="shadow-xl"><CardHeader><CardTitle className="text-center text-xl">Upload Your Image</CardTitle></CardHeader>
+      <Card className="shadow-xl"><CardHeader><CardTitle className="text-center text-xl">Upload Your Image(s)</CardTitle></CardHeader>
         <CardContent className="flex flex-col items-center justify-center p-8">
           <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" /><p>Verifying authentication...</p>
         </CardContent>
@@ -165,48 +239,59 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       </Card>
     )
   }
+  
+  const effectivePending = isPending || (fileQueue.length > 0 && !!currentUploadingFile);
 
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
-      <CardHeader><CardTitle className="text-center text-xl">Upload Image{currentFolderName && ` to "${currentFolderName}"`}</CardTitle><CardDescription className="text-center">Drag & drop or click to select a file.</CardDescription></CardHeader>
+      <CardHeader>
+        <CardTitle className="text-center text-xl">Upload Image(s){currentFolderName && ` to "${currentFolderName}"`}</CardTitle>
+        <CardDescription className="text-center">Drag & drop or click to select files. Max {CLIENT_MAX_FILE_SIZE_MB}MB per file.</CardDescription>
+      </CardHeader>
       <CardContent>
         <div
           onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop} onClick={triggerFileInput}
           className={cn('flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 ease-in-out',
             isDragging ? 'border-primary bg-accent/10' : 'border-border hover:border-primary/70',
-            isPending ? 'cursor-default opacity-70' : ''
+            effectivePending ? 'cursor-default opacity-70' : ''
           )}
-          role="button" aria-label="Image upload area" tabIndex={isPending ? -1 : 0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if(!isPending) triggerFileInput(); }}}
+          role="button" aria-label="Image upload area" tabIndex={effectivePending ? -1 : 0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if(!effectivePending) triggerFileInput(); }}}
         >
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" disabled={isPending} name="image" accept={ACCEPTED_IMAGE_TYPES.join(',')} />
-          {isPending ? (
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" disabled={effectivePending} name="image" accept={ACCEPTED_IMAGE_TYPES.join(',')} multiple />
+          {effectivePending ? (
             <div className="flex flex-col items-center text-center w-full">
               <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-              <p className="text-lg font-medium text-foreground">Uploading {localFileName && `"${localFileName}"`}</p>
+              <p className="text-lg font-medium text-foreground">
+                {totalFilesQueued > 1 ? `Uploading file ${completedFilesCount + 1} of ${totalFilesQueued}` : 'Uploading...'}
+              </p>
+              {currentUploadingFile && <p className="text-sm text-muted-foreground truncate max-w-xs">{currentUploadingFile.name}</p>}
               <Progress value={uploadProgress} className="w-full mt-2 h-2" />
               <p className="text-sm text-muted-foreground mt-1">{uploadProgress > 0 ? `${uploadProgress}%` : 'Processing...'}</p>
             </div>
-          ) : localPreviewSrc ? (
+          ) : currentPreviewSrc && currentUploadingFile ? ( // Should be currentPreviewSrc && currentUploadingFile based on how processNextFile sets them
             <div className="flex flex-col items-center text-center">
-              <Image src={localPreviewSrc} alt="Image preview" width={150} height={150} className="rounded-md object-contain max-h-[150px] mb-4 shadow-md" data-ai-hint="upload preview" />
-              <p className="text-sm text-muted-foreground">{localFileName}</p>
+              <Image src={currentPreviewSrc} alt="Image preview" width={150} height={150} className="rounded-md object-contain max-h-[150px] mb-4 shadow-md" data-ai-hint="upload preview" />
+              <p className="text-sm text-muted-foreground">{currentUploadingFile.name}</p>
               <p className="text-sm text-muted-foreground">Click or drag another file to replace.</p>
             </div>
           ) : (
             <div className="flex flex-col items-center text-center pointer-events-none">
-              <UploadCloud className="h-12 w-12 text-primary mb-4" />
-              <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
-              <p className="text-sm text-muted-foreground">Supports JPG, PNG, GIF, WebP. Max size varies.</p>
+              {fileQueue.length > 0 ? <ListChecks className="h-12 w-12 text-green-500 mb-4" /> : <UploadCloud className="h-12 w-12 text-primary mb-4" />}
+              <p className="text-lg font-semibold text-foreground">
+                {fileQueue.length > 0 ? `${fileQueue.length} file(s) queued. Drop more or click to add.` : 'Drop images here or click to browse'}
+              </p>
+              <p className="text-sm text-muted-foreground">Supports JPG, PNG, GIF, WebP. Max {CLIENT_MAX_FILE_SIZE_MB}MB per file.</p>
             </div>
           )}
         </div>
-        {!isPending && !localPreviewSrc && (
-          <Button onClick={triggerFileInput} className="w-full mt-6" variant="default" size="lg" disabled={isPending}>
-            <UploadCloud className="mr-2 h-5 w-5" /> Select Image
+        {!effectivePending && !currentPreviewSrc && ( // Show select button if not uploading and no preview (i.e. after queue finishes or initially)
+          <Button onClick={triggerFileInput} className="w-full mt-6" variant="default" size="lg" disabled={effectivePending}>
+            <UploadCloud className="mr-2 h-5 w-5" /> Select Image(s)
           </Button>
         )}
       </CardContent>
     </Card>
   );
 }
+
