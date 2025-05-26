@@ -35,7 +35,6 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   }
 
   const folderSpecificPath = path.join(UPLOAD_DIR_BASE_PUBLIC, userId, folderName);
-
   const resolvedFolderSpecificPath = path.resolve(folderSpecificPath);
   const resolvedUserBase = path.resolve(path.join(UPLOAD_DIR_BASE_PUBLIC, userId));
 
@@ -47,15 +46,15 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
   
   try {
     await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
-  } catch (error) {
-    console.error('CRITICAL: Failed to create base user directory:', resolvedUserBase, error);
+  } catch (error: any) {
+    console.error(`CRITICAL: Failed to create base user directory '${resolvedUserBase}': ${error.message}`, error);
     throw new Error(`Failed to prepare base user upload directory: ${resolvedUserBase}. Check server logs and directory permissions.`);
   }
 
   try {
     await fs.mkdir(resolvedFolderSpecificPath, { recursive: true, mode: 0o755 });
-  } catch (error) {
-    console.error('CRITICAL: Failed to create user-specific folder upload directory:', resolvedFolderSpecificPath, error);
+  } catch (error: any) {
+    console.error(`CRITICAL: Failed to create user-specific folder upload directory '${resolvedFolderSpecificPath}': ${error.message}`, error);
     throw new Error(`Failed to prepare upload directory: ${resolvedFolderSpecificPath}. Check server logs and directory permissions.`);
   }
   return resolvedFolderSpecificPath; 
@@ -163,29 +162,12 @@ export async function uploadImage(
          console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePathOnDisk}`);
          throw new Error('File path is outside allowed directory.');
     }
-
-    let fd;
+    
     try {
       await fs.writeFile(filePathOnDisk, buffer, { mode: 0o644 });
       console.log(`File ${filePathOnDisk} written successfully with mode 0o644.`);
-
-      try {
-        fd = await fs.open(filePathOnDisk, 'r'); // Open for reading
-        // No operation needed with fd here, just opening and closing.
-        console.log(`File ${filePathOnDisk} explicitly opened by Node.js process after write.`);
-      } catch (e: any) {
-        console.warn(`Warning: Could not explicitly open ${filePathOnDisk} after write: ${e.message}`);
-      } finally {
-        if (fd) {
-          try {
-            await fd.close();
-            console.log(`File ${filePathOnDisk} explicitly closed by Node.js process.`);
-          } catch (closeError: any) {
-            console.warn(`Warning: Could not explicitly close ${filePathOnDisk} after open: ${closeError.message}`);
-          }
-        }
-      }
-
+      
+      // Polling for file access by Node.js process
       let fileAccessible = false;
       const startTime = Date.now();
       while (!fileAccessible && (Date.now() - startTime) < MAX_FILE_ACCESS_RETRY_MS) {
@@ -449,7 +431,6 @@ export async function renameImage(
     return { success: false, error: 'New name is invalid or empty after sanitization.' };
   }
   
-  let oldFd, newFd;
   try {
     const imageRecord = await prisma.image.findUnique({
       where: { id: currentImageDbId },
@@ -524,19 +505,10 @@ export async function renameImage(
     await fs.rename(oldFullPathOnDisk, newFullPathOnDisk);
     
     try {
-      newFd = await fs.open(newFullPathOnDisk, 'r');
-      console.log(`File ${newFullPathOnDisk} explicitly opened by Node.js process after rename.`);
-    } catch (statError: any) {
-      console.warn(`Post-rename explicit open failed for ${newFullPathOnDisk} (Error: ${statError.message}). Continuing update.`);
-    } finally {
-        if (newFd) {
-            try {
-                await newFd.close();
-                console.log(`File ${newFullPathOnDisk} explicitly closed by Node.js process.`);
-            } catch (closeError: any) {
-                 console.warn(`Warning: Could not explicitly close ${newFullPathOnDisk} after rename and open: ${closeError.message}`);
-            }
-        }
+       await fs.access(newFullPathOnDisk, fs.constants.R_OK); // Check readability after rename
+       console.log(`File ${newFullPathOnDisk} is accessible by Node.js process after rename.`);
+    } catch (accessError: any) {
+      console.warn(`Post-rename fs.access failed for ${newFullPathOnDisk} (Error: ${accessError.message}). Continuing update.`);
     }
 
     if (POST_UPLOAD_DELAY_MS > 0) { 
@@ -622,12 +594,12 @@ export async function createFolderAction(
         if (error.code === 'ENOENT') { 
             try {
                 await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
-            } catch (mkdirError) {
-                console.error(`Failed to create base user directory ${resolvedUserBase}:`, mkdirError);
+            } catch (mkdirError:any) {
+                console.error(`Failed to create base user directory ${resolvedUserBase}: ${mkdirError.message}`, mkdirError);
                 return { success: false, error: 'Failed to prepare user storage on server.' };
             }
         } else { 
-            console.error(`Error accessing base user directory ${resolvedUserBase}:`, error);
+            console.error(`Error accessing base user directory ${resolvedUserBase}: ${error.message}`, error);
             return { success: false, error: 'Server error checking user storage.' };
         }
     }
@@ -637,7 +609,7 @@ export async function createFolderAction(
         revalidatePath('/my-images'); 
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
-        console.error(`Failed to create folder ${folderPath}:`, error); 
+        console.error(`Failed to create folder ${folderPath}: ${error.message}`, error); 
         return { success: false, error: error.message || 'Failed to create folder on server.' };
     }
 }
@@ -668,7 +640,7 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
     } catch (error: any) {
         if (error.code === 'ENOENT') { 
         } else {
-            console.error(`Error listing folders for user ${userId}:`, error);
+            console.error(`Error listing folders for user ${userId}: ${error.message}`, error);
         }
     }
 
@@ -684,4 +656,3 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
 }
 
     
-
