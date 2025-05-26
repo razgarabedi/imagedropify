@@ -6,55 +6,54 @@ import React, { useEffect, useActionState, startTransition, useState } from 'rea
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch'; // Import Switch
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { 
-    updateMaxUploadSizeAction, 
+import {
+    updateMaxUploadSizeAction,
     updateHomepageImageAction,
-    updateRegistrationsStatusAction, // Import new action
-    type SettingsActionResponse 
+    updateRegistrationsStatusAction,
+    type SettingsActionResponse
 } from '@/app/actions/settingsActions';
-import { Loader2, Image as ImageIcon, UserPlus, UserX } from 'lucide-react'; // Added UserPlus, UserX
+import { Loader2, Image as ImageIcon, UserPlus, UserX } from 'lucide-react';
 import { Separator } from '../ui/separator';
-import { cn } from '@/lib/utils'; // Added import for cn
+import { cn } from '@/lib/utils';
 
 interface SettingsFormProps {
   initialMaxUploadSizeMB: number;
   initialHomepageImageUrl: string | null;
-  initialRegistrationsEnabled: boolean; // Add new prop
+  initialRegistrationsEnabled: boolean;
 }
 
-const initialFormState: SettingsActionResponse = { 
-    success: false, 
-    currentMaxUploadSizeMB: 0, 
+const initialFormState: SettingsActionResponse = {
+    success: false,
+    currentMaxUploadSizeMB: 0,
     currentHomepageImageUrl: null,
     currentRegistrationsEnabled: true,
 };
 
 export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, initialRegistrationsEnabled }: SettingsFormProps) {
   const { toast } = useToast();
-  
+
   const [currentSize, setCurrentSize] = useState(initialMaxUploadSizeMB);
   const [currentHomepageUrl, setCurrentHomepageUrl] = useState(initialHomepageImageUrl ?? '');
   const [currentRegistrationsEnabled, setCurrentRegistrationsEnabled] = useState(initialRegistrationsEnabled);
 
 
   const [uploadSizeState, uploadSizeFormAction, isUploadSizePending] = useActionState(
-    updateMaxUploadSizeAction, 
+    updateMaxUploadSizeAction,
     { ...initialFormState, currentMaxUploadSizeMB: initialMaxUploadSizeMB, currentHomepageImageUrl: initialHomepageImageUrl, currentRegistrationsEnabled: initialRegistrationsEnabled }
   );
   const [homepageImageState, homepageImageFormAction, isHomepageImagePending] = useActionState(
-    updateHomepageImageAction, 
+    updateHomepageImageAction,
     { ...initialFormState, currentMaxUploadSizeMB: initialMaxUploadSizeMB, currentHomepageImageUrl: initialHomepageImageUrl, currentRegistrationsEnabled: initialRegistrationsEnabled }
   );
   const [registrationsStatusState, registrationsStatusFormAction, isRegistrationsStatusPending] = useActionState(
     updateRegistrationsStatusAction,
     { ...initialFormState, currentMaxUploadSizeMB: initialMaxUploadSizeMB, currentHomepageImageUrl: initialHomepageImageUrl, currentRegistrationsEnabled: initialRegistrationsEnabled }
   );
-  
+
   const isAnyPending = isUploadSizePending || isHomepageImagePending || isRegistrationsStatusPending;
 
-  // Effect for upload size updates
   useEffect(() => {
     if (!isUploadSizePending) {
       if (uploadSizeState.success) {
@@ -64,12 +63,11 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
         if (uploadSizeState.currentRegistrationsEnabled !== undefined) setCurrentRegistrationsEnabled(uploadSizeState.currentRegistrationsEnabled);
       } else if (uploadSizeState.error) {
         toast({ variant: 'destructive', title: 'Upload Size Update Failed', description: uploadSizeState.error });
-        if (uploadSizeState.currentMaxUploadSizeMB !== undefined) setCurrentSize(uploadSizeState.currentMaxUploadSizeMB); 
+        if (uploadSizeState.currentMaxUploadSizeMB !== undefined) setCurrentSize(uploadSizeState.currentMaxUploadSizeMB);
       }
     }
   }, [uploadSizeState, isUploadSizePending, toast]);
 
-  // Effect for homepage image URL updates
   useEffect(() => {
     if (!isHomepageImagePending) {
       if (homepageImageState.success) {
@@ -84,7 +82,6 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
     }
   }, [homepageImageState, isHomepageImagePending, toast]);
 
-  // Effect for registration status updates
   useEffect(() => {
     if (!isRegistrationsStatusPending) {
       if (registrationsStatusState.success) {
@@ -113,18 +110,18 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
   };
 
   const handleRegistrationsToggle = (checked: boolean) => {
-    setCurrentRegistrationsEnabled(checked); // Optimistically update UI
+    setCurrentRegistrationsEnabled(checked); 
     const formData = new FormData();
     formData.append('registrationsEnabled', String(checked));
     startTransition(() => registrationsStatusFormAction(formData));
   };
 
   return (
-    <div className="space-y-8"> {/* Increased overall spacing */}
-      <form onSubmit={handleUploadSizeSubmit} className="space-y-4">
+    <div className="space-y-6 md:space-y-8">
+      <form onSubmit={handleUploadSizeSubmit} className="space-y-3">
         <div>
-          <Label htmlFor="maxUploadSizeMB" className="text-base font-semibold">Maximum Image Upload Size (MB)</Label>
-          <div className="flex items-center gap-2 mt-1">
+          <Label htmlFor="maxUploadSizeMB" className="text-sm sm:text-base font-semibold">Maximum Image Upload Size (MB)</Label>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mt-1">
             <Input
               id="maxUploadSizeMB"
               name="maxUploadSizeMB"
@@ -132,11 +129,11 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
               value={currentSize}
               onChange={(e) => setCurrentSize(Number(e.target.value))}
               min="1"
-              max="10" 
-              className="w-32"
+              max="10"
+              className="w-full sm:w-32"
               disabled={isAnyPending}
             />
-            <Button type="submit" disabled={isUploadSizePending || isAnyPending}>
+            <Button type="submit" disabled={isUploadSizePending || isAnyPending} className="w-full sm:w-auto">
               {isUploadSizePending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isUploadSizePending ? 'Saving...' : 'Save Size'}
             </Button>
@@ -150,23 +147,23 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
 
       <Separator />
 
-      <form onSubmit={handleHomepageImageSubmit} className="space-y-4">
+      <form onSubmit={handleHomepageImageSubmit} className="space-y-3">
         <div>
-          <Label htmlFor="homepageImageUrl" className="text-base font-semibold">Homepage Image URL</Label>
-           <div className="flex items-center gap-2 mt-1">
+          <Label htmlFor="homepageImageUrl" className="text-sm sm:text-base font-semibold">Homepage Image URL</Label>
+           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mt-1">
             <Input
               id="homepageImageUrl"
               name="homepageImageUrl"
               type="url"
               value={currentHomepageUrl}
               onChange={(e) => setCurrentHomepageUrl(e.target.value)}
-              placeholder="https://example.com/image.png or leave blank for default"
-              className="flex-grow"
+              placeholder="https://example.com/image.png or leave blank"
+              className="flex-grow w-full"
               disabled={isAnyPending}
             />
-            <Button type="submit" disabled={isHomepageImagePending || isAnyPending}>
+            <Button type="submit" disabled={isHomepageImagePending || isAnyPending} className="w-full sm:w-auto">
               {isHomepageImagePending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isHomepageImagePending ? 'Saving...' : <><ImageIcon className="mr-2 h-4 w-4" /> Save Image URL</>}
+              {isHomepageImagePending ? 'Saving...' : <><ImageIcon className="mr-2 h-4 w-4" /> Save URL</>}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
@@ -175,11 +172,11 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
           {currentHomepageUrl && (
             <div className="mt-2">
               <p className="text-xs text-muted-foreground">Current Preview:</p>
-              <img 
-                src={currentHomepageUrl} 
-                alt="Homepage preview" 
-                className="max-w-xs max-h-32 object-contain border rounded-md mt-1"
-                onError={(e) => (e.currentTarget.style.display = 'none')} 
+              <img
+                src={currentHomepageUrl}
+                alt="Homepage preview"
+                className="max-w-full sm:max-w-xs max-h-32 object-contain border rounded-md mt-1"
+                onError={(e) => (e.currentTarget.style.display = 'none')}
               />
             </div>
           )}
@@ -189,9 +186,8 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
 
       <Separator />
 
-      {/* Registrations Toggle Section */}
       <div className="space-y-2">
-        <Label htmlFor="registrationsEnabledSwitch" className="text-base font-semibold">New User Registrations</Label>
+        <Label htmlFor="registrationsEnabledSwitch" className="text-sm sm:text-base font-semibold">New User Registrations</Label>
         <div className="flex items-center space-x-3 mt-1">
           <Switch
             id="registrationsEnabledSwitch"
@@ -221,3 +217,4 @@ export function SettingsForm({ initialMaxUploadSizeMB, initialHomepageImageUrl, 
     </div>
   );
 }
+

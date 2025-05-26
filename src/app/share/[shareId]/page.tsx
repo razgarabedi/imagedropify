@@ -25,9 +25,9 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
   if (!shareInfoResponse.success || !shareInfoResponse.folderInfo) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4 text-center">
-        <AlertTriangle className="w-16 h-16 text-destructive mb-4" />
-        <h1 className="text-2xl font-bold text-destructive mb-2">Share Link Invalid or Expired</h1>
-        <p className="text-muted-foreground mb-6">
+        <AlertTriangle className="w-12 h-12 sm:w-16 sm:h-16 text-destructive mb-4" />
+        <h1 className="text-xl sm:text-2xl font-bold text-destructive mb-2">Share Link Invalid or Expired</h1>
+        <p className="text-sm sm:text-base text-muted-foreground mb-6">
           {shareInfoResponse.error || "This share link is no longer valid or the folder doesn't exist."}
         </p>
         <Button asChild variant="outline">
@@ -46,7 +46,7 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
         <div className="container flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-2">
              <Image src="https://placehold.co/40x40.png" alt="ImageDrop Logo" width={32} height={32} className="rounded-md" data-ai-hint="logo abstract"/>
-            <h1 className="text-2xl font-bold text-primary">ImageDrop</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-primary">ImageDrop</h1>
           </Link>
            <Button asChild variant="outline" size="sm">
             <Link href="/">Back to ImageDrop</Link>
@@ -56,33 +56,33 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
 
       <main className="flex-grow container mx-auto px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-8 text-center">
-          <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground md:text-4xl">
             Shared Folder: <span className="text-primary">{folderName}</span>
           </h2>
-          <p className="text-muted-foreground mt-2">Content shared with you.</p>
+          <p className="text-muted-foreground mt-2 text-sm sm:text-base">Content shared with you.</p>
         </div>
-        <Separator className="my-8" />
+        <Separator className="my-6 md:my-8" />
 
         {images.length === 0 ? (
-          <div className="text-center py-16">
-            <GalleryVerticalEnd className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-6" />
-            <p className="text-muted-foreground text-xl mb-4">This shared folder is currently empty.</p>
+          <div className="text-center py-10 md:py-16">
+            <GalleryVerticalEnd className="mx-auto h-16 sm:h-24 w-16 sm:w-24 text-muted-foreground opacity-50 mb-4 sm:mb-6" />
+            <p className="text-muted-foreground text-lg sm:text-xl mb-4">This shared folder is currently empty.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
             {images.map((image) => (
               <Card key={image.id} className="shadow-lg overflow-hidden group">
                 <CardHeader className="p-0">
                   <div className="aspect-[4/3] relative w-full">
                     <Image
-                      src={image.url} 
-                      alt={`Image: ${image.originalName}`} 
+                      src={image.url}
+                      alt={`Image: ${image.originalName}`}
                       fill
-                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      sizes="(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1024px) 33vw, 20vw"
                       style={{ objectFit: "cover" }}
                       className="transition-transform duration-300 group-hover:scale-105"
                       data-ai-hint="shared image"
-                      unoptimized={true} // <--- Added this line
+                      unoptimized={true}
                     />
                   </div>
                 </CardHeader>
@@ -91,10 +91,10 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
                     {image.originalName}
                   </CardTitle>
                    <p className="text-xs text-muted-foreground">Uploaded: {format(new Date(image.uploadedAt), "MMM d, yyyy")}</p>
-                   <a 
-                    href={image.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
+                   <a
+                    href={image.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="text-xs text-primary hover:underline mt-1 block"
                   >
                     View Full Image
@@ -106,12 +106,11 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
         )}
       </main>
 
-      <footer className="py-8 text-center text-muted-foreground border-t mt-12">
-        <p>Powered by ImageDrop. <Link href="/" className="hover:underline text-primary">Create your own shares!</Link></p>
+      <footer className="py-8 text-center text-muted-foreground border-t mt-8 md:mt-12">
+        <p className="text-sm">Powered by ImageDrop. <Link href="/" className="hover:underline text-primary">Create your own shares!</Link></p>
       </footer>
     </div>
   );
 }
-
 
     

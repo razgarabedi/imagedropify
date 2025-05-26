@@ -23,7 +23,7 @@ import {
 } from '@/app/actions/shareActions';
 import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
 import { AuthButton } from '@/components/auth-button';
 import Link from 'next/link';
@@ -120,12 +120,12 @@ export default function MyImagesPage() {
       const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
         id: img.id,
-        name: img.filename || '', 
+        name: img.filename || '',
         previewSrc: `/uploads/users/${img.urlPath}`, // Use clean URL for preview here, cache-busting mainly for post-upload
         url: `/uploads/users/${img.urlPath}`,    // Clean URL
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName || '', 
+        originalName: img.originalName || '',
       }));
       setUserImages(displayImages);
       fetchActiveShareLink(currentFolder);
@@ -241,11 +241,11 @@ export default function MyImagesPage() {
     setUserImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { 
-              ...image, 
-              id: newImageDbId, 
-              name: newName, 
-              url: newUrl, 
+          ? {
+              ...image,
+              id: newImageDbId,
+              name: newName,
+              url: newUrl,
               previewSrc: `${newUrl}?t=${Date.now()}` // Cache-bust if previewing immediately after rename
             }
           : image
@@ -288,12 +288,14 @@ export default function MyImagesPage() {
 
         <Card className="mb-8 shadow-md">
           <CardHeader>
-            <CardContent className="flex flex-col sm:flex-row gap-4 items-start justify-between p-4">
-                <div className="flex flex-col gap-4 w-full sm:w-auto">
-                    <div className="flex-grow w-full sm:w-auto">
+            <CardTitle className="p-4 pb-0 text-lg font-semibold">Folder Management</CardTitle>
+          </CardHeader>
+            <CardContent className="flex flex-col md:flex-row gap-6 items-start justify-between p-4">
+                <div className="flex flex-col gap-4 w-full md:w-auto flex-1">
+                    <div className="w-full">
                         <Label htmlFor="folder-select" className="mb-1 block text-sm font-medium">Select Folder</Label>
                         <Select value={currentFolder} onValueChange={setCurrentFolder} disabled={userFolders.length === 0}>
-                            <SelectTrigger id="folder-select" className="w-full sm:w-[250px]">
+                            <SelectTrigger id="folder-select" className="w-full min-w-[200px] sm:min-w-[250px]">
                                 <SelectValue placeholder="Select a folder" />
                             </SelectTrigger>
                             <SelectContent>
@@ -309,8 +311,8 @@ export default function MyImagesPage() {
                             </SelectContent>
                         </Select>
                     </div>
-                    <form onSubmit={handleCreateFolderSubmit} className="flex gap-2 w-full sm:w-auto items-end">
-                        <div className="flex-grow">
+                    <form onSubmit={handleCreateFolderSubmit} className="flex flex-col sm:flex-row gap-2 w-full items-end">
+                        <div className="flex-grow w-full sm:w-auto">
                             <Label htmlFor="newFolderName" className="mb-1 block text-sm font-medium">Create New Folder</Label>
                             <Input
                                 id="newFolderName"
@@ -322,7 +324,7 @@ export default function MyImagesPage() {
                                 disabled={isCreateFolderPending}
                             />
                         </div>
-                        <Button type="submit" disabled={isCreateFolderPending || !newFolderName.trim()}>
+                        <Button type="submit" disabled={isCreateFolderPending || !newFolderName.trim()} className="w-full sm:w-auto">
                             {isCreateFolderPending ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <FolderPlus className="h-4 w-4 mr-2"/>}
                             Create
                         </Button>
@@ -330,14 +332,14 @@ export default function MyImagesPage() {
                 </div>
 
                 {currentFolder && currentFolder !== DEFAULT_FOLDER_NAME && (
-                  <div className="mt-4 sm:mt-0 w-full sm:w-auto sm:max-w-md">
+                  <div className="mt-4 md:mt-0 w-full md:w-auto md:max-w-sm flex-1">
                     <h3 className="text-md font-semibold mb-2">Share Folder: &quot;{currentFolder}&quot;</h3>
                     {activeShareUrl ? (
                       <div className="space-y-2">
-                        <Label htmlFor="activeShareUrl">Shareable Link:</Label>
+                        <Label htmlFor="activeShareUrl" className="sr-only">Shareable Link:</Label>
                         <div className="flex gap-2">
                           <Input id="activeShareUrl" type="text" value={activeShareUrl} readOnly className="flex-grow"/>
-                          <Button variant="outline" size="icon" onClick={handleCopyShareUrl} disabled={isShareUrlCopied}>
+                          <Button variant="outline" size="icon" onClick={handleCopyShareUrl} disabled={isShareUrlCopied} aria-label="Copy share URL">
                             {isShareUrlCopied ? <Check className="h-4 w-4 text-green-500"/> : <Copy className="h-4 w-4"/>}
                           </Button>
                         </div>
@@ -360,12 +362,11 @@ export default function MyImagesPage() {
                   </div>
                 )}
                  {currentFolder && currentFolder === DEFAULT_FOLDER_NAME && (
-                    <div className="mt-4 sm:mt-0 text-sm text-muted-foreground w-full sm:w-auto sm:max-w-md">
+                    <div className="mt-4 md:mt-0 text-sm text-muted-foreground w-full md:w-auto md:max-w-xs flex-1">
                         <p>The &quot;{DEFAULT_FOLDER_NAME}&quot; folder cannot be shared directly. Create a custom folder to share its contents.</p>
                     </div>
                 )}
             </CardContent>
-          </CardHeader>
         </Card>
 
         <p className="mt-1 mb-6 text-lg text-muted-foreground text-center">
@@ -375,9 +376,9 @@ export default function MyImagesPage() {
         <Separator className="my-8" />
 
         {isLoadingImages ? (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
             {Array.from({ length: 10 }).map((_, index) => (
-              <Card key={`skeleton-myimages-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+              <Card key={`skeleton-myimages-${currentFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                 <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                 <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                 <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -385,14 +386,14 @@ export default function MyImagesPage() {
             ))}
           </div>
         ) : userImages.length === 0 ? (
-          <div className="text-center py-16">
-            <GalleryVerticalEnd className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-6" />
-            <p className="text-muted-foreground text-xl mb-4">No images found in &quot;{currentFolder}&quot;.</p>
-            <p className="text-muted-foreground text-md mb-8">Upload images to this folder using the homepage.</p>
+          <div className="text-center py-10 md:py-16">
+            <GalleryVerticalEnd className="mx-auto h-16 sm:h-24 w-16 sm:w-24 text-muted-foreground opacity-50 mb-4 sm:mb-6" />
+            <p className="text-muted-foreground text-lg sm:text-xl mb-4">No images found in &quot;{currentFolder}&quot;.</p>
+            <p className="text-sm sm:text-base text-muted-foreground mb-8">Upload images to this folder using the homepage.</p>
             <Button asChild><Link href="/">Go to Upload</Link></Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
              {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
               <ImagePreviewCard
                 key={image.id}
@@ -411,9 +412,10 @@ export default function MyImagesPage() {
         )}
       </main>
 
-      <footer className="py-8 text-center text-muted-foreground border-t mt-12">
+      <footer className="py-8 text-center text-muted-foreground border-t mt-8 md:mt-12">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved.</p>
       </footer>
     </div>
   );
 }
+

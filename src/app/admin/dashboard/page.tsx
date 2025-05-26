@@ -2,7 +2,7 @@
 // src/app/admin/dashboard/page.tsx
 import { Suspense } from 'react';
 import { getAllUsersWithActivityAction } from '@/app/actions/userActions';
-import { getCurrentSettingsAction } from '@/app/actions/settingsActions'; 
+import { getCurrentSettingsAction } from '@/app/actions/settingsActions';
 import { UserTable } from '@/components/admin/user-table';
 import { SettingsForm } from '@/components/admin/settings-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,13 +18,13 @@ async function UserManagementSection() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> User Management</CardTitle>
-          <CardDescription>View and manage application users.</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><Users className="w-5 h-5 sm:w-6 sm:h-6" /> User Management</CardTitle>
+          <CardDescription className="text-sm sm:text-base">View and manage application users.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center text-destructive">
             <AlertCircle className="w-5 h-5 mr-2" />
-            <p>{usersListResponse.error || 'Could not load users.'}</p>
+            <p className="text-sm sm:text-base">{usersListResponse.error || 'Could not load users.'}</p>
           </div>
         </CardContent>
       </Card>
@@ -33,50 +33,49 @@ async function UserManagementSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> User Management</CardTitle>
-        <CardDescription>Overview of registered users, their status, and activity.</CardDescription>
+        <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><Users className="w-5 h-5 sm:w-6 sm:h-6" /> User Management</CardTitle>
+        <CardDescription className="text-sm sm:text-base">Overview of registered users, their status, and activity.</CardDescription>
       </CardHeader>
       <CardContent>
-        <UserTable users={usersListResponse.users} /> 
+        <UserTable users={usersListResponse.users} />
       </CardContent>
     </Card>
   );
 }
 
 async function SiteSettingsSection() {
-  // getCurrentSettingsAction is already refactored to use Prisma via getAllSiteSettingsForAdmin
-  const settingsResponse = await getCurrentSettingsAction(); 
-  
-  if (!settingsResponse.success || 
+  const settingsResponse = await getCurrentSettingsAction();
+
+  if (!settingsResponse.success ||
       settingsResponse.currentMaxUploadSizeMB === undefined ||
       settingsResponse.currentRegistrationsEnabled === undefined
      ) {
      return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Site Settings</CardTitle>
-           <CardDescription>Configure global application settings.</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><SettingsIcon className="w-5 h-5 sm:w-6 sm:h-6" /> Site Settings</CardTitle>
+           <CardDescription className="text-sm sm:text-base">Configure global application settings.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center text-destructive">
             <AlertCircle className="w-5 h-5 mr-2" />
-            <p>{settingsResponse.error || 'Could not load site settings.'}</p>
+            <p className="text-sm sm:text-base">{settingsResponse.error || 'Could not load site settings.'}</p>
           </div>
         </CardContent>
       </Card>
     );
   }
-  
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Site Settings</CardTitle>
-        <CardDescription>Configure global application settings.</CardDescription>
+        <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><SettingsIcon className="w-5 h-5 sm:w-6 sm:h-6" /> Site Settings</CardTitle>
+        <CardDescription className="text-sm sm:text-base">Configure global application settings.</CardDescription>
       </CardHeader>
       <CardContent>
-        <SettingsForm 
-            initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB} 
-            initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null} // Ensure null if undefined
+        <SettingsForm
+            initialMaxUploadSizeMB={settingsResponse.currentMaxUploadSizeMB}
+            initialHomepageImageUrl={settingsResponse.currentHomepageImageUrl ?? null}
             initialRegistrationsEnabled={settingsResponse.currentRegistrationsEnabled}
         />
       </CardContent>
@@ -87,15 +86,15 @@ async function SiteSettingsSection() {
 
 export default function AdminDashboardPage() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 md:space-y-8">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Admin Dashboard</h2>
-        <p className="text-muted-foreground">Manage users and configure site settings.</p>
+        <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin Dashboard</h2>
+        <p className="text-muted-foreground text-sm sm:text-base">Manage users and configure site settings.</p>
       </div>
-      
+
       <Separator />
 
-      <div className="grid gap-8 md:grid-cols-1"> 
+      <div className="grid gap-6 md:gap-8 lg:grid-cols-1">
         <Suspense fallback={<UserManagementSkeleton />}>
           <UserManagementSection />
         </Suspense>
@@ -111,11 +110,11 @@ function UserManagementSkeleton() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> User Management</CardTitle>
-        <CardDescription>View and manage application users.</CardDescription>
+        <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><Users className="w-5 h-5 sm:w-6 sm:h-6" /> User Management</CardTitle>
+        <CardDescription className="text-sm sm:text-base">View and manage application users.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Skeleton className="h-10 w-full" /> 
+        <Skeleton className="h-10 w-full" />
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />
         <Skeleton className="h-8 w-full" />
@@ -129,20 +128,20 @@ function SiteSettingsSkeleton() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><SettingsIcon className="w-5 h-5" /> Site Settings</CardTitle>
-        <CardDescription>Configure global application settings.</CardDescription>
+        <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl"><SettingsIcon className="w-5 h-5 sm:w-6 sm:h-6" /> Site Settings</CardTitle>
+        <CardDescription className="text-sm sm:text-base">Configure global application settings.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
-            <Skeleton className="h-6 w-1/3" /> 
-            <Skeleton className="h-10 w-1/2" /> 
+            <Skeleton className="h-6 w-1/3" />
+            <Skeleton className="h-10 w-1/2" />
         </div>
          <div className="space-y-2">
-            <Skeleton className="h-6 w-1/3" /> 
-            <Skeleton className="h-10 w-full" /> 
+            <Skeleton className="h-6 w-1/3" />
+            <Skeleton className="h-10 w-full" />
         </div>
          <div className="space-y-2">
-            <Skeleton className="h-6 w-1/3" /> 
+            <Skeleton className="h-6 w-1/3" />
             <Skeleton className="h-10 w-1/4" /> {/* For the switch and label */}
         </div>
         <Skeleton className="h-10 w-1/4" /> {/* Button skeleton */}
@@ -152,3 +151,4 @@ function SiteSettingsSkeleton() {
 }
 
 export const revalidate = 0;
+

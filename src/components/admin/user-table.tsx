@@ -1,3 +1,4 @@
+
 // src/components/admin/user-table.tsx
 'use client';
 
@@ -39,12 +40,12 @@ const initialActionState: AdminUserActionResponse = { success: false };
 
 function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, currentAdminId: string | undefined }) {
   const { toast } = useToast();
-  
+
   const [approveState, approveFormAction, isApprovePending] = useActionState(approveUserAction, initialActionState);
   const [rejectState, rejectFormAction, isRejectPending] = useActionState(rejectUserAction, initialActionState);
   const [unbanState, unbanFormAction, isUnbanPending] = useActionState(unbanUserAction, initialActionState);
   const [deleteState, deleteFormAction, isDeletePending] = useActionState(deleteUserAction, initialActionState);
-  
+
   const [isLimitsDialogOpen, setIsLimitsDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -70,7 +71,7 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
       toast({ variant: 'destructive', title: 'Unban Failed', description: unbanState.error });
     }
   }, [unbanState, isUnbanPending, toast]);
-  
+
   useEffect(() => {
     if (!isDeletePending && deleteState.success && deleteState.userId) {
       toast({ title: 'User Deleted', description: `User ${deleteState.userId} has been deleted.` });
@@ -89,70 +90,70 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
   const anyActionPending = isApprovePending || isRejectPending || isUnbanPending || isDeletePending;
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-1 sm:gap-2">
       {/* Status Action Buttons - check against capitalized status from Prisma enum */}
       {user.status === 'Pending' && (
         <>
-          <Button 
-            size="sm" 
-            variant="outline" 
-            onClick={() => startTransition(() => approveFormAction(createFormData(user.id)))} 
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => startTransition(() => approveFormAction(createFormData(user.id)))}
             disabled={anyActionPending}
-            className="text-green-600 border-green-600 hover:bg-green-50 hover:text-green-700"
+            className="text-green-600 border-green-600 hover:bg-green-50 hover:text-green-700 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
             title={`Approve ${user.email}`}
           >
-            {isApprovePending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />} Approve
+            {isApprovePending ? <Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /> : <CheckCircle className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />} Approve
           </Button>
-          <Button 
-            size="sm" 
-            variant="outline" 
-            onClick={() => startTransition(() => rejectFormAction(createFormData(user.id)))} 
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => startTransition(() => rejectFormAction(createFormData(user.id)))}
             disabled={anyActionPending}
-            className="text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700"
+            className="text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
             title={`Reject ${user.email}`}
           >
-            {isRejectPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />} Reject
+            {isRejectPending ? <Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /> : <XCircle className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />} Reject
           </Button>
         </>
       )}
       {user.status === 'Approved' && !isCurrentUserTheAdmin && (
-        <Button 
-          size="sm" 
-          variant="outline" 
-          onClick={() => startTransition(() => rejectFormAction(createFormData(user.id)))} 
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => startTransition(() => rejectFormAction(createFormData(user.id)))}
           disabled={anyActionPending}
-          className="text-orange-600 border-orange-600 hover:bg-orange-50 hover:text-orange-700"
+          className="text-orange-600 border-orange-600 hover:bg-orange-50 hover:text-orange-700 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
            title={`Ban ${user.email}`}
         >
-          {isRejectPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldAlert className="mr-2 h-4 w-4" />} Ban User
+          {isRejectPending ? <Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /> : <ShieldAlert className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />} Ban User
         </Button>
       )}
       {user.status === 'Rejected' && !isCurrentUserTheAdmin && (
-         <Button 
-          size="sm" 
-          variant="outline" 
-          onClick={() => startTransition(() => unbanFormAction(createFormData(user.id)))} 
+         <Button
+          size="sm"
+          variant="outline"
+          onClick={() => startTransition(() => unbanFormAction(createFormData(user.id)))}
           disabled={anyActionPending}
-          className="text-blue-600 border-blue-600 hover:bg-blue-50 hover:text-blue-700"
+          className="text-blue-600 border-blue-600 hover:bg-blue-50 hover:text-blue-700 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
            title={`Unban ${user.email}`}
         >
-          {isUnbanPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />} Unban
+          {isUnbanPending ? <Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /> : <RotateCcw className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />} Unban
         </Button>
       )}
 
-       <UserLimitsDialog 
-            user={user} 
-            open={isLimitsDialogOpen} 
+       <UserLimitsDialog
+            user={user}
+            open={isLimitsDialogOpen}
             onOpenChange={setIsLimitsDialogOpen}
             triggerButton={
-                 <Button 
-                    size="sm" 
-                    variant="outline" 
-                    disabled={anyActionPending || isCurrentUserTheAdmin} // Also disable for self
+                 <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={anyActionPending || isCurrentUserTheAdmin} 
                     title={isCurrentUserTheAdmin ? "Cannot set limits for own admin account" : `Manage limits for ${user.email}`}
-                    className="text-foreground border-border hover:bg-accent"
+                    className="text-foreground border-border hover:bg-accent px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
                 >
-                    <Settings2 className="mr-2 h-4 w-4" /> Limits
+                    <Settings2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" /> Limits
                 </Button>
             }
          />
@@ -160,14 +161,14 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
       {!isCurrentUserTheAdmin && (
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button 
-              size="sm" 
-              variant="destructive" 
+            <Button
+              size="sm"
+              variant="destructive"
               disabled={anyActionPending}
-              className="hover:bg-destructive/90"
+              className="hover:bg-destructive/90 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
                title={`Delete ${user.email}`}
             >
-              {isDeletePending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />} Delete
+              {isDeletePending ? <Loader2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 animate-spin" /> : <Trash2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />} Delete
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -179,8 +180,8 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeletePending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction 
-                onClick={() => startTransition(() => deleteFormAction(createFormData(user.id)))} 
+              <AlertDialogAction
+                onClick={() => startTransition(() => deleteFormAction(createFormData(user.id)))}
                 disabled={isDeletePending}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
@@ -196,22 +197,21 @@ function UserActionButtons({ user, currentAdminId }: { user: UserWithActivity, c
 }
 
 export function UserTable({ users }: UserTableProps) {
-  const { user: currentAdmin } = useAuth(); 
+  const { user: currentAdmin } = useAuth();
 
   if (!users || users.length === 0) {
     return <p className="text-muted-foreground">No users found.</p>;
   }
 
   const getStatusBadgeVariant = (status: UserStatus): "default" | "secondary" | "destructive" | "outline" => {
-     // Match against capitalized status from Prisma enum
      switch (status) {
-      case 'Approved': return 'default'; 
-      case 'Pending': return 'secondary'; 
-      case 'Rejected': return 'destructive'; 
+      case 'Approved': return 'default';
+      case 'Pending': return 'secondary';
+      case 'Rejected': return 'destructive';
       default: return 'outline';
     }
   };
-  
+
   const formatLimit = (value: number | null | undefined, unit: string = '', defaultText = 'Global'): string => {
     if (value === null || value === undefined) {
       return defaultText;
@@ -224,37 +224,35 @@ export function UserTable({ users }: UserTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="min-w-[150px] break-words">Email</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Images</TableHead>
-            <TableHead className="text-right">Storage (MB)</TableHead>
-            <TableHead className="text-center">Limits (Img / Single MB / Total MB)</TableHead>
-            <TableHead className="min-w-[350px]">Actions</TableHead> 
+            <TableHead className="min-w-[150px] px-2 py-3 sm:px-4">Email</TableHead>
+            <TableHead className="px-2 py-3 sm:px-4">Role</TableHead>
+            <TableHead className="px-2 py-3 sm:px-4">Status</TableHead>
+            <TableHead className="text-right px-2 py-3 sm:px-4">Images</TableHead>
+            <TableHead className="text-right px-2 py-3 sm:px-4">Storage (MB)</TableHead>
+            <TableHead className="text-center px-2 py-3 sm:px-4 whitespace-nowrap">Limits (Img / File MB / Total MB)</TableHead>
+            <TableHead className="min-w-[280px] sm:min-w-[350px] px-2 py-3 sm:px-4">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {users.map((user) => (
             <TableRow key={user.id}>
-              <TableCell className="font-medium break-words">{user.email}</TableCell>
-              <TableCell>
-                 {/* Role is 'Admin' or 'User' from Prisma enum */}
+              <TableCell className="font-medium break-words px-2 py-4 sm:px-4">{user.email}</TableCell>
+              <TableCell className="px-2 py-4 sm:px-4">
                 <Badge variant={user.role === 'Admin' ? 'default' : 'secondary'}>
                   {user.role}
                 </Badge>
               </TableCell>
-               <TableCell>
-                 {/* Status is 'Pending', 'Approved', or 'Rejected' */}
+               <TableCell className="px-2 py-4 sm:px-4">
                 <Badge variant={getStatusBadgeVariant(user.status)} className="capitalize">
                   {user.status}
                 </Badge>
               </TableCell>
-              <TableCell className="text-right">{user.imageCount}</TableCell>
-              <TableCell className="text-right">{user.totalStorageUsedMB}</TableCell>
-               <TableCell className="text-center text-xs whitespace-nowrap"> 
-                 {formatLimit(user.maxImages, '', 'Unlimited')} / {formatLimit(user.maxSingleUploadSizeMB)} / {formatLimit(user.maxTotalStorageMB, '', 'Unlimited')}
+              <TableCell className="text-right px-2 py-4 sm:px-4">{user.imageCount}</TableCell>
+              <TableCell className="text-right px-2 py-4 sm:px-4">{user.totalStorageUsedMB}</TableCell>
+               <TableCell className="text-center text-xs whitespace-nowrap px-2 py-4 sm:px-4">
+                 {formatLimit(user.maxImages, '', 'N/A')} / {formatLimit(user.maxSingleUploadSizeMB)} / {formatLimit(user.maxTotalStorageMB, '', 'N/A')}
                </TableCell>
-              <TableCell>
+              <TableCell className="px-2 py-4 sm:px-4">
                 <UserActionButtons user={user} currentAdminId={currentAdmin?.id} />
               </TableCell>
             </TableRow>
@@ -264,3 +262,4 @@ export function UserTable({ users }: UserTableProps) {
     </div>
   );
 }
+

@@ -85,12 +85,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
       const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, folderToFetch);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id,
-        name: img.filename || '', 
-        previewSrc: `/uploads/users/${img.urlPath}`, 
-        url: `/uploads/users/${img.urlPath}`, 
+        name: img.filename || '',
+        previewSrc: `/uploads/users/${img.urlPath}`,
+        url: `/uploads/users/${img.urlPath}`,
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName || '', 
+        originalName: img.originalName || '',
       }));
       setUploadedImages(displayImages);
     } catch (error) {
@@ -128,17 +128,18 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     const newImage: DisplayImage = {
       id: imageFile.id,
       name: imageFile.filename,
-      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`,
+      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`, // Cache-bust for immediate display
       url: `/uploads/users/${imageFile.urlPath}`,
       uploaderId: imageFile.userId,
       folderName: imageFile.folderName,
       originalName: imageFile.originalName,
     };
 
+    // Optimistically add if it's the currently viewed folder
     if (imageFile.folderName === selectedFolder) {
       setUploadedImages(prevImages => [newImage, ...prevImages].slice(0, LATEST_IMAGES_COUNT));
     }
-    
+    // Re-fetch to ensure consistency, especially if folder limits are involved or sorting changes
     if (user) {
       fetchImagesForSelectedFolder(selectedFolder);
     }
@@ -146,25 +147,28 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
+    // Optimistic update
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
+    // Re-fetch from server to confirm and get latest list
     if (user) fetchImagesForSelectedFolder(selectedFolder);
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
+    // Optimistic update with cache-busting
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { 
-              ...image, 
-              id: newImageDbId, 
-              name: newName, 
-              url: newUrl,
-              previewSrc: `${newUrl}?t=${Date.now()}` 
+          ? {
+              ...image,
+              id: newImageDbId, // Prisma update returns the same ID for an update
+              name: newName,
+              url: newUrl, // The path fragment might change if filename changes
+              previewSrc: `${newUrl}?t=${Date.now()}` // Ensure cache-bust
             }
           : image
       )
     );
-    if (user) fetchImagesForSelectedFolder(selectedFolder); 
+    if (user) fetchImagesForSelectedFolder(selectedFolder); // Re-fetch to confirm and get latest list
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
@@ -227,10 +231,10 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         )}
 
         {!user && !authLoading && serverImageContent && (
-          <section className="text-center py-16">
+          <section className="text-center py-8 md:py-16">
             {serverImageContent}
-            <h2 className="text-4xl font-extrabold tracking-tight text-foreground mb-4">Welcome to ImageDrop!</h2>
-            <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-foreground mb-4">Welcome to ImageDrop!</h2>
+            <p className="text-lg sm:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
               The easiest way to upload and share your images. Securely store your memories and share them with friends, family, or the world.
             </p>
             <Button asChild size="lg">
@@ -240,7 +244,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         )}
 
         {!user && authLoading && (
-             <section className="text-center py-16">
+             <section className="text-center py-8 md:py-16">
                 <Skeleton className="mx-auto rounded-lg mb-8 shadow-lg w-[300px] h-[200px]" />
                 <Skeleton className="h-10 w-3/4 mx-auto mb-4" />
                 <Skeleton className="h-6 w-1/2 mx-auto mb-8" />
@@ -249,7 +253,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         )}
 
 
-        {!authLoading && user && <Separator className="my-12" />}
+        {!authLoading && user && <Separator className="my-8 md:my-12" />}
 
         {!authLoading && user && (
           <section aria-labelledby="gallery-title">
@@ -257,9 +261,9 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               Latest Images in: <span className="text-primary">&quot;{selectedFolder}&quot;</span>
             </h2>
             {isLoadingImages ? (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={`skeleton-latest-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+                  <Card key={`skeleton-latest-${selectedFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -268,14 +272,15 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               </div>
             ) : uploadedImages.length === 0 ? (
               <div className="text-center py-10">
-                <ImageIconLucide className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-4" data-ai-hint="empty state folder" />
-                <p className="text-muted-foreground text-lg">No images found in &quot;{selectedFolder}&quot;. Start by uploading an image above!</p>
+                <ImageIconLucide className="mx-auto h-16 sm:h-24 w-16 sm:w-24 text-muted-foreground opacity-50 mb-4 sm:mb-6" data-ai-hint="empty state folder" />
+                <p className="text-muted-foreground text-lg sm:text-xl mb-4">No images found in &quot;{selectedFolder}&quot;.</p>
+                <p className="text-sm sm:text-base text-muted-foreground">Start by uploading an image above!</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id}
+                    key={image.id} // Simplified key as filter ensures valid id
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
@@ -289,7 +294,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                 ))}
               </div>
             )}
-             {uploadedImages.length > 0 && (
+             {uploadedImages.length > 0 && user && (
               <div className="mt-8 text-center">
                 <Button asChild variant="outline">
                   <Link href="/my-images">View All My Images & Folders</Link>
@@ -298,12 +303,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             )}
           </section>
         )}
-         {authLoading && user && (
+         {authLoading && user && ( // Skeleton for logged-in user while images are loading
             <section aria-labelledby="gallery-title">
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
-                 <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                     {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                    <Card key={`skeleton-loggedin-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+                    <Card key={`skeleton-loggedin-${selectedFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                         <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                         <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                         <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -314,7 +319,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         )}
       </main>
 
-      <footer className="py-8 text-center text-muted-foreground border-t">
+      <footer className="py-8 text-center text-muted-foreground border-t mt-8 md:mt-12">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
          <p className="text-xs mt-1">Images stored in `public/uploads/users/userId/folderName/`.</p>
          <p className="text-xs mt-1">User data & image metadata now in PostgreSQL.</p>
