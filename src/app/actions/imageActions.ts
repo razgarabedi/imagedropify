@@ -48,14 +48,19 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
     await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
   } catch (error: any) {
     console.error(`CRITICAL: Failed to create base user directory '${resolvedUserBase}': ${error.message}`, error);
-    throw new Error(`Failed to prepare base user upload directory: ${resolvedUserBase}. Check server logs and directory permissions.`);
+    // Do not throw and prevent folderSpecificPath creation if base already exists (e.g. due to race condition or prior run)
+    if (error.code !== 'EEXIST') {
+        throw new Error(`Failed to prepare base user upload directory: ${resolvedUserBase}. Check server logs and directory permissions.`);
+    }
   }
 
   try {
     await fs.mkdir(resolvedFolderSpecificPath, { recursive: true, mode: 0o755 });
   } catch (error: any) {
     console.error(`CRITICAL: Failed to create user-specific folder upload directory '${resolvedFolderSpecificPath}': ${error.message}`, error);
-    throw new Error(`Failed to prepare upload directory: ${resolvedFolderSpecificPath}. Check server logs and directory permissions.`);
+     if (error.code !== 'EEXIST') {
+        throw new Error(`Failed to prepare upload directory: ${resolvedFolderSpecificPath}. Check server logs and directory permissions.`);
+    }
   }
   return resolvedFolderSpecificPath; 
 }
@@ -72,6 +77,8 @@ export async function uploadImage(
   prevState: UploadImageActionState,
   formData: FormData
 ): Promise<UploadImageActionState> {
+  let filePathOnDiskLocal: string | undefined = undefined; 
+
   try {
     const userId = await getCurrentUserIdFromSession();
     if (!userId) {
@@ -93,9 +100,9 @@ export async function uploadImage(
     }
 
     const folderNameInput = formData.get('folderName') as string | null;
-    const targetFolderName = (folderNameInput && folderNameInput.trim() !== "") ? folderNameInput.trim() : DEFAULT_FOLDER_NAME;
+    const finalFolderName = (folderNameInput && folderNameInput.trim() !== "") ? folderNameInput.trim() : DEFAULT_FOLDER_NAME;
 
-    if (targetFolderName.includes('..') || targetFolderName.includes('/') || targetFolderName.includes('\\')) {
+    if (finalFolderName.includes('..') || finalFolderName.includes('/') || finalFolderName.includes('\\')) {
         return { success: false, error: 'Invalid folder name specified for upload.' };
     }
 
@@ -131,7 +138,7 @@ export async function uploadImage(
 
     let uploadPathForFolder: string; 
     try {
-      uploadPathForFolder = await ensureUploadDirsExist(userId, targetFolderName);
+      uploadPathForFolder = await ensureUploadDirsExist(userId, finalFolderName);
     } catch (error: any) {
       console.error('Upload directory preparation failed:', error);
       return { success: false, error: error.message || 'Server error preparing upload directory.' };
@@ -140,9 +147,9 @@ export async function uploadImage(
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
       return { success: false, error: `Invalid file type. Accepted: JPG, PNG, GIF, WebP. Provided: ${file.type}` };
     }
-    const fileExtension = MIME_TO_EXTENSION[file.type];
+    const fileExtension = MIME_TO_EXTENSION[file.type] || path.extname(file.name); // Fallback to original ext if MIME not perfectly matched
     if (!fileExtension) {
-      return { success: false, error: `Unsupported file type (${file.type}).` };
+      return { success: false, error: `Unsupported file type or unable to determine extension (${file.type}).` };
     }
 
     const bytes = await file.arrayBuffer();
@@ -153,54 +160,71 @@ export async function uploadImage(
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
     const diskFilename = `${uniqueSuffix}-${safeOriginalNamePart}${fileExtension}`.substring(0, MAX_FILENAME_LENGTH);
     
-    const filePathOnDisk = path.join(uploadPathForFolder, diskFilename); 
-    const urlPathForDb = path.join(userId, targetFolderName, diskFilename).split(path.sep).join('/');
+    filePathOnDiskLocal = path.join(uploadPathForFolder, diskFilename); 
+    const urlPathForDb = path.join(userId, finalFolderName, diskFilename).split(path.sep).join('/');
 
-    const resolvedFilePath = path.resolve(filePathOnDisk);
+    const resolvedFilePath = path.resolve(filePathOnDiskLocal);
     if (!resolvedFilePath.startsWith(path.resolve(uploadPathForFolder) + path.sep) &&
         !resolvedFilePath.startsWith(path.resolve(uploadPathForFolder) + path.win32.sep) ){
-         console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePathOnDisk}`);
+         console.error(`Security alert: Attempt to write file outside designated upload directory. Path: ${filePathOnDiskLocal}`);
          throw new Error('File path is outside allowed directory.');
     }
     
     try {
-      await fs.writeFile(filePathOnDisk, buffer, { mode: 0o644 });
-      console.log(`File ${filePathOnDisk} written successfully with mode 0o644.`);
+      await fs.writeFile(filePathOnDiskLocal, buffer, { mode: 0o644 });
+      console.log(`File ${filePathOnDiskLocal} written successfully with mode 0o644.`);
       
-      // Polling for file access by Node.js process
       let fileAccessible = false;
       const startTime = Date.now();
       while (!fileAccessible && (Date.now() - startTime) < MAX_FILE_ACCESS_RETRY_MS) {
         try {
-          await fs.access(filePathOnDisk, fs.constants.R_OK); 
+          await fs.access(filePathOnDiskLocal, fs.constants.R_OK); 
           fileAccessible = true;
-          console.log(`File ${filePathOnDisk} is accessible for reading by Node.js process after ${Date.now() - startTime}ms.`);
+          console.log(`File ${filePathOnDiskLocal} is accessible for reading by Node.js process after ${Date.now() - startTime}ms.`);
           break;
         } catch (accessError: any) {
           if (accessError.code === 'ENOENT') {
-            console.warn(`File ${filePathOnDisk} not yet found by fs.access (ENOENT), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
+            console.warn(`File ${filePathOnDiskLocal} not yet found by fs.access (ENOENT), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
           } else {
-             console.warn(`File ${filePathOnDisk} not yet accessible by fs.access (Error: ${accessError.message}), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
+             console.warn(`File ${filePathOnDiskLocal} not yet accessible by fs.access (Error: ${accessError.message}), retrying in ${FILE_ACCESS_RETRY_INTERVAL_MS}ms...`);
           }
           await new Promise(resolve => setTimeout(resolve, FILE_ACCESS_RETRY_INTERVAL_MS));
         }
       }
 
       if (!fileAccessible) {
-        console.error(`File ${filePathOnDisk} was not accessible by Node.js process after ${MAX_FILE_ACCESS_RETRY_MS}ms. Upload will proceed, but immediate access issues by web server are likely.`);
+        console.error(`File ${filePathOnDiskLocal} was not accessible by Node.js process after ${MAX_FILE_ACCESS_RETRY_MS}ms. Upload will proceed, but immediate access issues by web server are likely.`);
       }
 
       try {
-        const stats = await fs.stat(filePathOnDisk);
-        console.log(`fs.stat successful for ${filePathOnDisk} after write and access checks. Size: ${stats.size}`);
+        const stats = await fs.stat(filePathOnDiskLocal);
+        console.log(`fs.stat successful for ${filePathOnDiskLocal} after write and access checks. Size: ${stats.size}`);
       } catch (statError: any) {
-        console.warn(`Post-write fs.stat failed for ${filePathOnDisk} (Error: ${statError.message}). Continuing upload.`);
+        console.warn(`Post-write fs.stat failed for ${filePathOnDiskLocal} (Error: ${statError.message}). Continuing upload.`);
       }
       
       if (POST_UPLOAD_DELAY_MS > 0) {
         console.log(`Applying POST_UPLOAD_DELAY_MS of ${POST_UPLOAD_DELAY_MS}ms.`);
         await new Promise(resolve => setTimeout(resolve, POST_UPLOAD_DELAY_MS));
       }
+
+      // ***** DIAGNOSTIC HTTP FETCH *****
+      // This URL should match how Nginx/Apache serves the file publicly,
+      // but fetched from localhost as the Next.js server would do.
+      const internalCheckUrl = `http://localhost:${process.env.PORT || 3000}/uploads/users/${urlPathForDb}`;
+      console.log(`[DIAGNOSTIC] Attempting internal HEAD request to: ${internalCheckUrl}`);
+      try {
+        const response = await fetch(internalCheckUrl, { method: 'HEAD' });
+        console.log(`[DIAGNOSTIC] Internal HEAD response status: ${response.status}, content-type: ${response.headers.get('content-type')}`);
+        if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) {
+          console.warn(`[DIAGNOSTIC] Internal HEAD fetch failed or returned non-image. Status: ${response.status}. File might not be immediately servable by web server to Next.js optimizer.`);
+        } else {
+          console.log(`[DIAGNOSTIC] Internal HEAD fetch successful. Image seems accessible via HTTP to the Node.js process.`);
+        }
+      } catch (fetchError: any) {
+        console.error(`[DIAGNOSTIC] Internal HEAD fetch error for ${internalCheckUrl}: ${fetchError.message}. This could be a network issue or Nginx/Apache not responding correctly on localhost for this path.`);
+      }
+      // ***** END DIAGNOSTIC HTTP FETCH *****
       
       const imageRecord = await prisma.image.create({
         data: {
@@ -209,7 +233,7 @@ export async function uploadImage(
           urlPath: urlPathForDb, 
           mimeType: file.type,
           size: file.size,
-          folderName: targetFolderName,
+          folderName: finalFolderName,
           userId: userId,
         }
       });
@@ -220,16 +244,29 @@ export async function uploadImage(
 
       return { success: true, data: imageRecord };
     } catch (error: any) {
-      console.error('Failed to save file to disk or database:', filePathOnDisk, error);
-      try {
-        await fs.unlink(filePathOnDisk);
-      } catch (cleanupError) {
-        console.error(`Failed to cleanup orphaned file ${filePathOnDisk} after DB error:`, cleanupError);
+      console.error('Failed to save file to disk or database:', filePathOnDiskLocal, error);
+      // Ensure filePathOnDiskLocal is defined before attempting unlink
+      if (filePathOnDiskLocal) {
+          try {
+            await fs.unlink(filePathOnDiskLocal);
+            console.log(`Cleaned up orphaned file: ${filePathOnDiskLocal}`);
+          } catch (cleanupError) {
+            console.error(`Failed to cleanup orphaned file ${filePathOnDiskLocal} after DB error:`, cleanupError);
+          }
       }
       return { success: false, error: 'Failed to save file or its metadata.' };
     }
   } catch (e: any) {
     console.error("Unexpected error in uploadImage action:", e);
+    // At this top level, filePathOnDiskLocal might not be set if error occurred before its assignment
+    if (filePathOnDiskLocal) {
+      try {
+        await fs.unlink(filePathOnDiskLocal);
+        console.log(`Cleaned up orphaned file from outer catch: ${filePathOnDiskLocal}`);
+      } catch (cleanupError) {
+        console.error(`Failed to cleanup orphaned file ${filePathOnDiskLocal} from outer catch:`, cleanupError);
+      }
+    }
     return { success: false, error: e.message || "An unexpected server error occurred during upload." };
   }
 }
@@ -252,6 +289,11 @@ export async function getUserImages(
   if (targetFolderName !== undefined && targetFolderName !== null) {
     whereClause.folderName = targetFolderName;
   } else if (targetFolderName === undefined) { 
+     // If targetFolderName is explicitly undefined (not null), list from default.
+     // If targetFolderName is null, list from all folders (no folderName filter).
+     // This part needs care if `null` means "all folders".
+     // For now, assuming undefined means default, null means all (no filter).
+     // The current usage passes `DEFAULT_FOLDER_NAME` or a specific folder name, or `null` from admin actions.
      whereClause.folderName = DEFAULT_FOLDER_NAME; 
   }
   
@@ -303,8 +345,10 @@ export async function countUserImages(userId: string, targetFolderName?: string 
   
   const whereClause: any = { userId };
   if (targetFolderName !== undefined && targetFolderName !== null) {
+    // If targetFolderName is provided (and not null), filter by it.
     whereClause.folderName = targetFolderName;
   }
+  // If targetFolderName is null or undefined, count all images for the user (no folderName filter)
 
   try {
     return await prisma.image.count({ where: whereClause });
@@ -448,8 +492,14 @@ export async function renameImage(
     const oldDiskFilename = imageRecord.filename;
     const extension = path.extname(oldDiskFilename);
     if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
-      return { success: false, error: `Invalid or unsupported file extension: ${extension}` };
+      // Also allow for cases where extension might be missing or slightly different (e.g. .jpeg vs .jpg)
+      // but the original MIME type from upload was valid. This is a loose check.
+      const originalMimeExt = MIME_TO_EXTENSION[imageRecord.mimeType];
+      if (!originalMimeExt || extension.toLowerCase() !== originalMimeExt.toLowerCase()) {
+           console.warn(`Filename extension ${extension} does not match expected for MIME type ${imageRecord.mimeType}. Proceeding with original extension.`);
+      }
     }
+
 
     const oldPrefixMatch = oldDiskFilename.match(/^(\d{13}-\d{1,10})-/);
     const prefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
@@ -505,7 +555,7 @@ export async function renameImage(
     await fs.rename(oldFullPathOnDisk, newFullPathOnDisk);
     
     try {
-       await fs.access(newFullPathOnDisk, fs.constants.R_OK); // Check readability after rename
+       await fs.access(newFullPathOnDisk, fs.constants.R_OK); 
        console.log(`File ${newFullPathOnDisk} is accessible by Node.js process after rename.`);
     } catch (accessError: any) {
       console.warn(`Post-rename fs.access failed for ${newFullPathOnDisk} (Error: ${accessError.message}). Continuing update.`);
@@ -609,7 +659,10 @@ export async function createFolderAction(
         revalidatePath('/my-images'); 
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
-        console.error(`Failed to create folder ${folderPath}: ${error.message}`, error); 
+        console.error(`Failed to create folder ${newFolderName} for user ${userId}: ${error.message}`, error); 
+        if (error.message.includes('EEXIST')) { // Check if error message indicates folder already exists
+            return { success: false, error: `Folder "${newFolderName}" already exists.` };
+        }
         return { success: false, error: error.message || 'Failed to create folder on server.' };
     }
 }
@@ -639,6 +692,12 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         
     } catch (error: any) {
         if (error.code === 'ENOENT') { 
+          // If the base user directory doesn't exist, create it and then return default.
+          try {
+            await fs.mkdir(userUploadsPath, { recursive: true, mode: 0o755 });
+          } catch (mkdirError: any) {
+            console.error(`Error creating base directory ${userUploadsPath} during listUserFolders: ${mkdirError.message}`, mkdirError);
+          }
         } else {
             console.error(`Error listing folders for user ${userId}: ${error.message}`, error);
         }
@@ -646,6 +705,19 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
 
     if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
        folders.unshift({ name: DEFAULT_FOLDER_NAME });
+       // Ensure the default "Uploads" folder exists physically if it's not listed
+       try {
+            const defaultFolderPath = path.join(userUploadsPath, DEFAULT_FOLDER_NAME);
+            await fs.access(defaultFolderPath);
+       } catch (accessError: any) {
+            if (accessError.code === 'ENOENT') {
+                try {
+                    await fs.mkdir(path.join(userUploadsPath, DEFAULT_FOLDER_NAME), { recursive: true, mode: 0o755 });
+                } catch (mkdirError: any) {
+                    console.error(`Error creating default folder ${DEFAULT_FOLDER_NAME} for user ${userId}: ${mkdirError.message}`, mkdirError);
+                }
+            }
+       }
     }
 
     return folders.sort((a,b) => {
@@ -654,5 +726,4 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         return a.name.localeCompare(b.name);
     });
 }
-
-    
+  
