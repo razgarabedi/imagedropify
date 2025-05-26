@@ -15,7 +15,7 @@ import {
     type UserFolder,
     type PaginatedUserImagesResponse
 } from '@/app/actions/imageActions';
-import { DEFAULT_FOLDER_NAME, ITEMS_PER_PAGE } from '@/lib/imageConfig'; // ITEMS_PER_PAGE might not be needed here if always fetching latest X
+import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig'; 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -66,6 +66,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         const folders = await listUserFolders(user.id);
         const validFolders = folders.length > 0 ? folders : [{ name: DEFAULT_FOLDER_NAME }];
         setUserFolders(validFolders);
+        // Ensure selectedFolder is valid, otherwise default it
         if (!validFolders.some(f => f.name === selectedFolder)) {
             setSelectedFolder(DEFAULT_FOLDER_NAME);
         }
@@ -88,7 +89,6 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
     setIsLoadingImages(true);
     try {
-      // For homepage, always fetch page 1 and a specific limit for "latest"
       const response: PaginatedUserImagesResponse = await getUserImages(user.id, { 
         page: 1, 
         limit: LATEST_IMAGES_COUNT, 
@@ -97,8 +97,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
       const displayImages: DisplayImage[] = response.images.map(img => ({
         id: img.id,
         name: img.filename || '',
-        previewSrc: img.url + `?t=${Date.now()}`, // Cache-bust for potentially just uploaded/renamed
-        url: img.url,
+        previewSrc: `/uploads/${img.urlPath}?t=${Date.now()}`, // Added cache-busting
+        url: `/uploads/${img.urlPath}`,
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '',
@@ -115,8 +115,9 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
   useEffect(() => {
     if (!authLoading) {
       if (user) {
-        fetchUserFoldersForUpload();
+        fetchUserFoldersForUpload(); // This will also potentially trigger the next useEffect if selectedFolder changes
       } else {
+        // Reset for logged-out state
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setSelectedFolder(DEFAULT_FOLDER_NAME);
         setUploadedImages([]);
@@ -125,6 +126,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
   }, [authLoading, user, fetchUserFoldersForUpload]);
 
+  // This effect runs when selectedFolder changes or user logs in/out
   useEffect(() => {
     if (!authLoading && user) {
         fetchImagesForSelectedFolder(selectedFolder);
@@ -136,7 +138,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
-    // Re-fetch to ensure consistency, especially if the current folder is the one uploaded to.
+    // The server action `uploadImage` calls `revalidatePath('/')`.
+    // After the upload, re-fetch images for the currently selected folder.
     if (user) {
       fetchImagesForSelectedFolder(selectedFolder);
     }
@@ -150,8 +153,6 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
     if (user) fetchImagesForSelectedFolder(selectedFolder); 
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
-
-  const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
 
   return (
@@ -183,7 +184,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
             <div className="mt-6 max-w-md mx-auto">
                 <Label htmlFor="upload-folder-select" className="text-sm font-medium text-muted-foreground">Upload to folder:</Label>
-                <Select value={selectedFolder} onValueChange={setSelectedFolder} disabled={userFolders.length === 0}>
+                <Select value={selectedFolder} onValueChange={setSelectedFolder} disabled={userFolders.length === 0 || authLoading}>
                     <SelectTrigger id="upload-folder-select" className="w-full mt-1">
                         <SelectValue placeholder="Select a folder" />
                     </SelectTrigger>
@@ -243,7 +244,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             {isLoadingImages ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={`skeleton-latest-${selectedFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+                  <Card key={`skeleton-latest-${selectedFolder}-${index}-${Date.now()}-${Math.random()}`} className="shadow-lg">
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -289,7 +290,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                     {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                    <Card key={`skeleton-loggedin-${selectedFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+                    <Card key={`skeleton-loggedin-${selectedFolder}-${index}-${Date.now()}-${Math.random()}`} className="shadow-lg">
                         <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                         <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                         <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -308,3 +309,4 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     </div>
   );
 }
+
