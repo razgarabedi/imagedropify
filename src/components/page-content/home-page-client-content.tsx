@@ -8,8 +8,14 @@ import { ImageUploader } from '@/components/image-uploader';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
-import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions';
-import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
+import { 
+    getUserImages, 
+    type UserImageData, 
+    listUserFolders, 
+    type UserFolder,
+    type PaginatedUserImagesResponse
+} from '@/app/actions/imageActions';
+import { DEFAULT_FOLDER_NAME, ITEMS_PER_PAGE } from '@/lib/imageConfig'; // ITEMS_PER_PAGE might not be needed here if always fetching latest X
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -30,14 +36,14 @@ import type { UploadedImageServerData } from '@/app/actions/imageActions';
 interface DisplayImage {
   id: string;
   name: string;
-  previewSrc: string; // For next/image, potentially cache-busted
-  url: string;         // Clean URL for copying, etc.
+  previewSrc: string; 
+  url: string;         
   uploaderId: string;
   folderName: string;
   originalName: string;
 }
 
-const LATEST_IMAGES_COUNT = 8;
+const LATEST_IMAGES_COUNT = 8; // For the homepage display
 
 interface HomePageClientContentProps {
   serverImageContent: ReactNode | null;
@@ -82,12 +88,17 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
     setIsLoadingImages(true);
     try {
-      const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, folderToFetch);
-      const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
+      // For homepage, always fetch page 1 and a specific limit for "latest"
+      const response: PaginatedUserImagesResponse = await getUserImages(user.id, { 
+        page: 1, 
+        limit: LATEST_IMAGES_COUNT, 
+        targetFolderName: folderToFetch 
+      });
+      const displayImages: DisplayImage[] = response.images.map(img => ({
         id: img.id,
         name: img.filename || '',
-        previewSrc: `/uploads/users/${img.urlPath}`,
-        url: `/uploads/users/${img.urlPath}`,
+        previewSrc: img.url + `?t=${Date.now()}`, // Cache-bust for potentially just uploaded/renamed
+        url: img.url,
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '',
@@ -125,21 +136,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
-    const newImage: DisplayImage = {
-      id: imageFile.id,
-      name: imageFile.filename,
-      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`, // Cache-bust for immediate display
-      url: `/uploads/users/${imageFile.urlPath}`,
-      uploaderId: imageFile.userId,
-      folderName: imageFile.folderName,
-      originalName: imageFile.originalName,
-    };
-
-    // Optimistically add if it's the currently viewed folder
-    if (imageFile.folderName === selectedFolder) {
-      setUploadedImages(prevImages => [newImage, ...prevImages].slice(0, LATEST_IMAGES_COUNT));
-    }
-    // Re-fetch to ensure consistency, especially if folder limits are involved or sorting changes
+    // Re-fetch to ensure consistency, especially if the current folder is the one uploaded to.
     if (user) {
       fetchImagesForSelectedFolder(selectedFolder);
     }
@@ -147,28 +144,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
-    // Optimistic update
-    setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
-    // Re-fetch from server to confirm and get latest list
     if (user) fetchImagesForSelectedFolder(selectedFolder);
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
-    // Optimistic update with cache-busting
-    setUploadedImages((prevImages) =>
-      prevImages.map(image =>
-        image.id === oldImageDbId
-          ? {
-              ...image,
-              id: newImageDbId, // Prisma update returns the same ID for an update
-              name: newName,
-              url: newUrl, // The path fragment might change if filename changes
-              previewSrc: `${newUrl}?t=${Date.now()}` // Ensure cache-bust
-            }
-          : image
-      )
-    );
-    if (user) fetchImagesForSelectedFolder(selectedFolder); // Re-fetch to confirm and get latest list
+    if (user) fetchImagesForSelectedFolder(selectedFolder); 
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
@@ -193,10 +173,10 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         {user && (
           <section aria-labelledby="upload-title" className="mb-12">
             <div className="max-w-3xl mx-auto text-center">
-              <h2 id="upload-title" className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+              <h2 id="upload-title" className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl md:text-5xl">
                 Upload Your Images
               </h2>
-              <p className="mt-4 text-lg text-muted-foreground">
+              <p className="mt-3 text-base text-muted-foreground sm:mt-4 sm:text-lg md:text-xl">
                 Supports JPG, PNG, GIF, WebP. Max size varies by user/site setting.
               </p>
             </div>
@@ -258,7 +238,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         {!authLoading && user && (
           <section aria-labelledby="gallery-title">
             <h2 id="gallery-title" className="text-2xl font-semibold text-foreground mb-6 text-center sm:text-left">
-              Latest Images in: <span className="text-primary">&quot;{selectedFolder}&quot;</span>
+              Latest Images in: <span className="text-primary">&quot;{selectedFolder}&quot;</span> (Shows up to {LATEST_IMAGES_COUNT})
             </h2>
             {isLoadingImages ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
@@ -280,7 +260,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id} // Simplified key as filter ensures valid id
+                    key={image.id} 
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
@@ -290,6 +270,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                     folderName={image.folderName}
                     onDelete={handleImageDelete}
                     onRename={handleImageRename}
+                    unoptimized={true}
                   />
                 ))}
               </div>
@@ -303,7 +284,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             )}
           </section>
         )}
-         {authLoading && user && ( // Skeleton for logged-in user while images are loading
+         {authLoading && user && ( 
             <section aria-labelledby="gallery-title">
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
@@ -327,4 +308,3 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     </div>
   );
 }
-

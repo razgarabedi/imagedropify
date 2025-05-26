@@ -13,7 +13,8 @@ import {
     createFolderAction,
     listUserFolders,
     type UserFolder,
-    type FolderActionResponse as ImageFolderActionResponse
+    type FolderActionResponse as ImageFolderActionResponse,
+    type PaginatedUserImagesResponse,
 } from '@/app/actions/imageActions';
 import {
     createShareLinkAction,
@@ -21,7 +22,7 @@ import {
     getActiveShareLinkForFolder,
     type ShareActionResponse
 } from '@/app/actions/shareActions';
-import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
+import { DEFAULT_FOLDER_NAME, ITEMS_PER_PAGE } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -31,7 +32,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Link2, Copy, Trash2, Check } from 'lucide-react';
+import { GalleryVerticalEnd, Loader2, FolderPlus, Folder as FolderIcon, Share2, Copy, Trash2, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   Select,
@@ -40,12 +41,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImagePagination } from '@/components/image-pagination'; // New component
 
 interface DisplayImage {
   id: string;
   name: string;
-  previewSrc: string; // For next/image
-  url: string;         // Clean URL for copying, etc.
+  previewSrc: string; 
+  url: string;         
   uploaderId: string;
   folderName: string;
   originalName: string;
@@ -67,6 +69,10 @@ export default function MyImagesPage() {
   const [activeShareUrl, setActiveShareUrl] = useState<string | null>(null);
   const [isShareUrlCopied, setIsShareUrlCopied] = useState(false);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalImages, setTotalImages] = useState(0);
+
   const [createFolderState, createFolderFormAction, isCreateFolderPending] = useActionState(createFolderAction, initialImageFolderActionState);
   const [createShareLinkState, createShareLinkFormAction, isCreateShareLinkPending] = useActionState(createShareLinkAction, initialShareActionState);
   const [revokeShareLinkState, revokeShareLinkFormAction, isRevokeShareLinkPending] = useActionState(revokeShareLinkAction, initialShareActionState);
@@ -75,6 +81,7 @@ export default function MyImagesPage() {
     if (!user && !authLoading) {
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setCurrentFolder(DEFAULT_FOLDER_NAME);
+        setCurrentPage(1);
         return;
     }
     if (!user) return;
@@ -87,11 +94,13 @@ export default function MyImagesPage() {
       } else if (folders.length === 0) {
           setCurrentFolder(DEFAULT_FOLDER_NAME);
       }
+      setCurrentPage(1); // Reset to page 1 when folders are re-fetched or current folder changes
     } catch (error) {
       console.error("Failed to fetch user folders:", error);
       toast({ variant: 'destructive', title: 'Error', description: 'Could not load your folders.' });
       setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
       setCurrentFolder(DEFAULT_FOLDER_NAME);
+      setCurrentPage(1);
     }
   }, [user, authLoading, toast, currentFolder]);
 
@@ -108,30 +117,40 @@ export default function MyImagesPage() {
     }
   }, [user]);
 
-
-  const fetchImagesForCurrentFolder = useCallback(async () => {
+  const fetchImagesForCurrentFolder = useCallback(async (pageToFetch: number) => {
     if (!user || !currentFolder) {
       setUserImages([]);
+      setTotalPages(1);
+      setTotalImages(0);
       setIsLoadingImages(false);
       return;
     }
     setIsLoadingImages(true);
     try {
-      const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
-      const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
+      const response: PaginatedUserImagesResponse = await getUserImages(user.id, {
+        page: pageToFetch,
+        limit: ITEMS_PER_PAGE,
+        targetFolderName: currentFolder
+      });
+      const displayImages: DisplayImage[] = response.images.map(img => ({
         id: img.id,
         name: img.filename || '',
-        previewSrc: `/uploads/users/${img.urlPath}`, // Use clean URL for preview here, cache-busting mainly for post-upload
-        url: `/uploads/users/${img.urlPath}`,    // Clean URL
+        previewSrc: img.url, 
+        url: img.url,    
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '',
       }));
       setUserImages(displayImages);
+      setTotalPages(response.totalPages);
+      setCurrentPage(response.currentPage);
+      setTotalImages(response.totalImages);
       fetchActiveShareLink(currentFolder);
     } catch (error) {
       console.error("Failed to fetch user images for folder:", currentFolder, error);
       setUserImages([]);
+      setTotalPages(1);
+      setTotalImages(0);
       toast({ variant: 'destructive', title: 'Error', description: `Could not load images for folder ${currentFolder}.` });
     } finally {
       setIsLoadingImages(false);
@@ -142,22 +161,31 @@ export default function MyImagesPage() {
     if (!authLoading && !user) {
       router.push('/login?message=Please login to view your images.');
     } else if (!authLoading && user) {
-      fetchUserFolders();
+      fetchUserFolders(); // This will also reset currentPage to 1
     }
   }, [user, authLoading, router, fetchUserFolders]);
 
   useEffect(() => {
     if (user && !authLoading && currentFolder) {
-      fetchImagesForCurrentFolder();
+      fetchImagesForCurrentFolder(currentPage); // Fetch based on current page
     }
-  }, [user, authLoading, currentFolder, fetchImagesForCurrentFolder]);
+  }, [user, authLoading, currentFolder, currentPage, fetchImagesForCurrentFolder]);
+
+  // When currentFolder changes, reset currentPage to 1 and fetch images
+  useEffect(() => {
+    if (user && !authLoading) {
+        setCurrentPage(1);
+        // fetchImagesForCurrentFolder(1) will be called by the dependency array change of currentPage
+    }
+  }, [currentFolder, user, authLoading]);
+
 
   useEffect(() => {
     if (!isCreateFolderPending) {
         if (createFolderState.success && createFolderState.folderName) {
             toast({ title: 'Folder Created', description: `Folder "${createFolderState.folderName}" created successfully.` });
             setNewFolderName('');
-            fetchUserFolders().then(() => {
+            fetchUserFolders().then(() => { // This resets page to 1
                  setCurrentFolder(createFolderState.folderName!);
             });
         } else if (createFolderState.error) {
@@ -188,6 +216,9 @@ export default function MyImagesPage() {
     }
   }, [revokeShareLinkState, isRevokeShareLinkPending, toast]);
 
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+  };
 
   const handleCreateFolderSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -233,25 +264,14 @@ export default function MyImagesPage() {
   };
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
-    setUserImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
-    // Optionally re-fetch if pagination or total counts matter here
-  }, []);
+    // Re-fetch the current page to reflect the deletion and potentially update pagination
+    fetchImagesForCurrentFolder(currentPage);
+  }, [fetchImagesForCurrentFolder, currentPage]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
-    setUserImages((prevImages) =>
-      prevImages.map(image =>
-        image.id === oldImageDbId
-          ? {
-              ...image,
-              id: newImageDbId,
-              name: newName,
-              url: newUrl,
-              previewSrc: `${newUrl}?t=${Date.now()}` // Cache-bust if previewing immediately after rename
-            }
-          : image
-      )
-    );
-  }, []);
+    // Re-fetch current page as name change doesn't affect pagination logic directly, but good to refresh
+    fetchImagesForCurrentFolder(currentPage);
+  }, [fetchImagesForCurrentFolder, currentPage]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
@@ -377,7 +397,7 @@ export default function MyImagesPage() {
 
         {isLoadingImages ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-            {Array.from({ length: 10 }).map((_, index) => (
+            {Array.from({ length: ITEMS_PER_PAGE }).map((_, index) => (
               <Card key={`skeleton-myimages-${currentFolder}-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                 <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                 <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
@@ -393,22 +413,32 @@ export default function MyImagesPage() {
             <Button asChild><Link href="/">Go to Upload</Link></Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-             {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
-              <ImagePreviewCard
-                key={image.id}
-                id={image.id}
-                src={image.previewSrc} // Will be the clean URL for images loaded on this page
-                url={image.url}
-                name={image.name}
-                uploaderId={image.uploaderId}
-                originalName={image.originalName}
-                folderName={image.folderName}
-                onDelete={handleImageDelete}
-                onRename={handleImageRename}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+              {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
+                <ImagePreviewCard
+                  key={image.id}
+                  id={image.id}
+                  src={image.previewSrc} 
+                  url={image.url}
+                  name={image.name}
+                  uploaderId={image.uploaderId}
+                  originalName={image.originalName}
+                  folderName={image.folderName}
+                  onDelete={handleImageDelete}
+                  onRename={handleImageRename}
+                  unoptimized={true}
+                />
+              ))}
+            </div>
+            <ImagePagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+              totalImages={totalImages}
+              itemsPerPage={ITEMS_PER_PAGE}
+            />
+          </>
         )}
       </main>
 
@@ -418,4 +448,3 @@ export default function MyImagesPage() {
     </div>
   );
 }
-

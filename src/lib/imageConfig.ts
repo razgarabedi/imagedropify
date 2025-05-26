@@ -11,4 +11,5 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
 };
 // Reduced delay as long delays were not solving the root web server issue.
 // The fs.access polling loop in imageActions.ts is a more targeted check for file visibility by Node.js.
-export const POST_UPLOAD_DELAY_MS = 500;
+export const POST_UPLOAD_DELAY_MS = 500; // ms
+export const ITEMS_PER_PAGE = 15;
