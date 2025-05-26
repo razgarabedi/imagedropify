@@ -43,11 +43,19 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 This application uses PostgreSQL as its database and Prisma as its ORM.
 
 1.  **Install PostgreSQL & Required Libraries:**
-    *   Ensure you have PostgreSQL installed and running on your system. For Ubuntu:
-        ```bash
-        sudo apt update
-        sudo apt install postgresql postgresql-contrib
-        ```
+    *   Ensure you have PostgreSQL installed and running on your system.
+        *   For Ubuntu:
+            ```bash
+            sudo apt update
+            sudo apt install postgresql postgresql-contrib
+            ```
+        *   For CentOS (e.g., CentOS 7/8/Stream):
+            ```bash
+            sudo yum install postgresql-server postgresql-contrib # Or dnf for newer CentOS/RHEL
+            sudo postgresql-setup initdb # Or: sudo /usr/pgsql-X/bin/postgresql-X-setup initdb (X is version)
+            sudo systemctl enable postgresql
+            sudo systemctl start postgresql
+            ```
     *   **Install OpenSSL 1.1 (Required by Prisma on some Ubuntu versions):**
         Prisma's query engine might require `libssl1.1`. If you encounter Prisma errors related to `libssl.so.1.1` not being found, install it.
         For Ubuntu 20.04 LTS (Focal) and older (check your Ubuntu version with `lsb_release -a`):
@@ -61,7 +69,8 @@ This application uses PostgreSQL as its database and Prisma as its ORM.
         rm libssl1.1_1.1.1f-1ubuntu2_amd64.deb
         ```
         **Note:** Always prefer packages from official repositories if available for your Ubuntu version. If `libssl1.1` causes issues on newer systems, you might need to explore Prisma's binaryTargets or ensure your system provides a compatible libssl (often libssl3 is present, but Prisma might specifically need 1.1).
-    *   After installation, PostgreSQL service usually starts automatically. You can check its status:
+        For CentOS, typically OpenSSL is provided by the system. If Prisma specifically requires `libssl.so.1.1` and it's not present, you might need to compile/install it from source or find a compatible package, which can be complex. Usually, Prisma's engines for RHEL/CentOS work with system OpenSSL.
+    *   After installation, PostgreSQL service usually starts automatically on Ubuntu. On CentOS, ensure it's started and enabled. You can check its status:
         ```bash
         sudo systemctl status postgresql
         ```
@@ -136,31 +145,37 @@ You can choose to deploy ImageDrop using either Nginx or Apache as your web serv
 
 ---
 
-## Deployment on Ubuntu with Nginx & PM2
+## Deployment on Ubuntu/CentOS with Nginx & PM2
 
-This guide outlines deploying ImageDrop on an Ubuntu server (e.g., 20.04, 22.04 LTS) using Nginx as a reverse proxy and PM2 as a process manager.
+This guide outlines deploying ImageDrop on a Linux server (e.g., Ubuntu, CentOS) using Nginx as a reverse proxy and PM2 as a process manager.
 
 ### 1. Prerequisites
 
-*   Ubuntu Server with root or sudo access.
+*   Linux Server (Ubuntu/CentOS) with root or sudo access.
 *   Node.js (v18.x or later) and npm installed.
 *   Git installed.
 *   Domain name pointed to your server's IP (recommended for production).
 *   **PostgreSQL Server** accessible to the application, set up as described in the "Database Setup" section above.
-*   **OpenSSL 1.1 libraries** installed if required by Prisma (see "Database Setup" Step 1).
+*   **OpenSSL 1.1 libraries** installed if required by Prisma (see "Database Setup" Step 1, mainly for Ubuntu).
 
 ### 2. Install Node.js, npm, and PM2
 
 ```bash
-# Update package list
+# Update package list (Ubuntu)
 sudo apt update
+# Or for CentOS:
+# sudo yum update -y
 
 # Install curl (if not already installed)
-sudo apt install -y curl
+sudo apt install -y curl # Ubuntu
+# sudo yum install -y curl # CentOS
 
 # Add NodeSource repository for Node.js 20.x (or your preferred LTS)
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt install -y nodejs # Ubuntu
+# For CentOS:
+# curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+# sudo yum install -y nodejs
 
 # Verify Node.js and npm
 node -v
@@ -176,7 +191,7 @@ pm2 --version
 ```bash
 # Create application directory (adjust path if needed)
 sudo mkdir -p /var/www/imagedrop
-# Change ownership to your deployment user (e.g., 'ubuntu' or your non-root user)
+# Change ownership to your deployment user (e.g., 'ubuntu', 'centos', or your non-root user)
 # THIS USER WILL RUN THE PM2 PROCESS. Let's call this `node_user`.
 sudo chown $USER:$USER /var/www/imagedrop
 cd /var/www/imagedrop
@@ -194,7 +209,7 @@ npm install
 Create a `.env.local` file in the root of your project (`/var/www/imagedrop/.env.local`):
 
 ```bash
-nano .env.local
+nano .env.local # Or vi, or your preferred editor
 ```
 
 Add the following, **replacing placeholders with your actual values**:
@@ -237,7 +252,7 @@ npm run build
 ### 7. Set File Ownership and Permissions (Focus on `public/uploads`)
 
 **CRITICAL:** Correct permissions are essential for security and operation.
-Assume your Node.js application (run by PM2) will execute as your current deployment user (e.g., `ubuntu`). Let's call this the `node_user`. Nginx typically runs as `www-data`.
+Assume your Node.js application (run by PM2) will execute as your current deployment user (e.g., `ubuntu`, `centos`). Let's call this the `node_user`. Nginx typically runs as `www-data` (Ubuntu) or `nginx` (CentOS). **Replace `www-data` with `nginx` if you are on CentOS in the commands below.**
 
 ```bash
 cd /var/www/imagedrop
@@ -251,44 +266,49 @@ sudo chmod 750 /var/www/imagedrop # Owner: rwx, Group: rx, Others: ---
 
 # 3. Permissions for `public/uploads` directory
 #    - `node_user` (running PM2) needs `rwx` to create `users/<userId>/<folderName>/` and write images.
-#    - `www-data` (running Nginx) needs `rx` to traverse directories and `r` to read image files.
+#    - Nginx user (`www-data` or `nginx`) needs `rx` to traverse directories and `r` to read image files.
 
 # Create base uploads structure if it doesn't exist (application code also attempts this)
 sudo mkdir -p public/uploads/users
 sudo chown -R node_user:node_user public/uploads # Node user owns the uploads structure
 
 # **Recommended Method: Using ACLs (Access Control Lists)**
-# Install ACLs if not present: sudo apt install acl
-# Give Node User rwx, and www-data rx to 'public/uploads' and everything created within it.
+# Install ACLs if not present:
+# sudo apt install acl # Ubuntu
+# sudo yum install acl # CentOS
+
+# Give Node User rwx, and Nginx user (www-data/nginx) rx to 'public/uploads' and everything created within it.
 # The -R flag applies recursively to existing files/dirs.
 # The -dR flag sets default ACLs for NEW files/dirs created within public/uploads. THIS IS CRUCIAL.
+# Replace 'www-data' with 'nginx' if on CentOS
 sudo setfacl -R -m u:node_user:rwx public/uploads
-sudo setfacl -R -m u:www-data:rx public/uploads # Grant www-data read/execute
-sudo setfacl -dR -m u:node_user:rwx public/uploads  # Default for new items by node_user
-sudo setfacl -dR -m u:www-data:rx public/uploads   # Default for new items (ensures www-data can read/execute)
+sudo setfacl -R -m u:www-data:rx public/uploads
+sudo setfacl -dR -m u:node_user:rwx public/uploads
+sudo setfacl -dR -m u:www-data:rx public/uploads
 
-# If ACLs are not used, you might need to add www-data to node_user's group
+# If ACLs are not used, you might need to add www-data (or nginx) to node_user's group
 # or manage permissions more manually, which can be complex and error-prone.
 
 # 4. Nginx traversal permissions for parent directories
-# Nginx (www-data) needs execute (x) permission to traverse the path to served files.
-# These might already be permissive enough on standard Ubuntu setups.
+# Nginx user (`www-data` or `nginx`) needs execute (x) permission to traverse the path to served files.
+# These might already be permissive enough on standard setups.
 sudo chmod o+x /var
 sudo chmod o+x /var/www
 sudo chmod o+x /var/www/imagedrop
 sudo chmod o+x /var/www/imagedrop/public
-# For public/uploads and its children, ACLs (or group permissions) should handle www-data's 'rx' access.
+# For public/uploads and its children, ACLs (or group permissions) should handle Nginx user's 'rx' access.
 
-# Verify (example for ACL method):
+# Verify (example for ACL method, replace www-data with nginx if on CentOS):
 # getfacl /var/www/imagedrop/public/uploads
 # After an upload, check: getfacl /var/www/imagedrop/public/uploads/users/<some_user_id>/<some_folder>/<image.png>
-# Ensure www-data has 'r-x' on directories and 'r--' on the image file.
+# Ensure Nginx user (www-data/nginx) has 'r-x' on directories and 'r--' on the image file.
 ```
 **Important Notes on Permissions:**
 *   Replace `node_user` with the actual username that will run the `pm2` process.
-*   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` command is critical for new files/folders to inherit correct permissions for Nginx.
+*   Replace `www-data` with `nginx` in `setfacl` commands if you are on CentOS.
+*   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` (or `nginx` user) command is critical for new files/folders to inherit correct permissions for Nginx.
 *   The application code attempts to set permissions `0o755` for directories and `0o644` for files during creation. This acts as a fallback.
-*   If issues persist, use `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>` immediately after an upload to trace permissions for each component of the path for the `www-data` user.
+*   If issues persist, use `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>` (or `nginx` user) immediately after an upload to trace permissions.
 
 ### 8. Start Application with PM2
 
@@ -315,8 +335,15 @@ The app will run on `http://localhost:3000` by default.
 ### 9. Install and Configure Nginx
 
 ```bash
-sudo apt install -y nginx
-sudo nano /etc/nginx/sites-available/imagedrop
+sudo apt install -y nginx # Ubuntu
+# sudo yum install -y nginx # CentOS
+# On CentOS, you might need to enable the EPEL repository first if Nginx isn't in default repos.
+# sudo yum install epel-release
+# sudo yum install nginx
+
+# Create Nginx config (path may vary slightly on CentOS, often /etc/nginx/conf.d/imagedrop.conf)
+sudo nano /etc/nginx/sites-available/imagedrop # Ubuntu
+# sudo nano /etc/nginx/conf.d/imagedrop.conf # CentOS (example, create if not exist)
 ```
 
 Paste the following, replacing `your_domain.com`. Ensure `client_max_body_size` matches or exceeds the Next.js `bodySizeLimit` (currently '10mb').
@@ -390,73 +417,128 @@ sudo systemctl reload nginx
 
 Enable the site and restart Nginx if it's the first time:
 ```bash
+# For Ubuntu:
 sudo ln -s /etc/nginx/sites-available/imagedrop /etc/nginx/sites-enabled/ # If not already linked
+# For CentOS, if using conf.d, linking is usually not needed.
 sudo systemctl restart nginx
+# If Nginx fails to start, check logs: journalctl -xeu nginx or /var/log/nginx/error.log
 ```
 
-### 10. Configure Firewall (UFW) for Nginx
+### 10. Configure Firewall (UFW for Ubuntu, firewalld for CentOS)
 
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx HTTP' # For port 80
-# sudo ufw allow 'Nginx HTTPS' # If using SSL on port 443 (after SSL setup)
-sudo ufw enable
-sudo ufw status
-```
+*   **For Ubuntu (UFW):**
+    ```bash
+    sudo ufw allow OpenSSH
+    sudo ufw allow 'Nginx HTTP' # For port 80
+    # sudo ufw allow 'Nginx HTTPS' # If using SSL on port 443 (after SSL setup)
+    sudo ufw enable
+    sudo ufw status
+    ```
+*   **For CentOS (firewalld):**
+    ```bash
+    sudo firewall-cmd --permanent --add-service=ssh
+    sudo firewall-cmd --permanent --add-service=http # For port 80
+    # sudo firewall-cmd --permanent --add-service=https # If using SSL on port 443
+    sudo firewall-cmd --reload
+    sudo firewall-cmd --list-all
+    ```
 
 ### 11. (Optional) Secure Nginx with SSL using Certbot
 
 If you have a domain, enable HTTPS:
+*   **For Ubuntu:**
+    ```bash
+    sudo apt install -y certbot python3-certbot-nginx
+    sudo certbot --nginx -d your_domain.com -d www.your_domain.com
+    ```
+*   **For CentOS:**
+    ```bash
+    sudo yum install certbot python3-certbot-nginx # Or python2-certbot-nginx on older CentOS
+    sudo certbot --nginx -d your_domain.com -d www.your_domain.com
+    ```
+Certbot will modify your Nginx config for SSL and set up auto-renewal.
 ```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your_domain.com -d www.your_domain.com
-# Certbot will modify your Nginx config for SSL and set up auto-renewal.
-sudo systemctl restart nginx
+sudo systemctl restart nginx # Or reload
 sudo certbot renew --dry-run # Test renewal
 ```
 
-### 12. Security Considerations Summary (Nginx)
+### 12. (CentOS Specific) SELinux Configuration for Nginx
+
+If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow Nginx to make network connections to proxy to your Next.js app (port 3000) and access files in `/var/www/imagedrop`.
+
+*   **Allow Nginx to connect to network (for proxying):**
+    ```bash
+    sudo setsebool -P httpd_can_network_connect 1
+    ```
+*   **Set correct SELinux context for web content (if needed):**
+    If Nginx has trouble accessing files in `/var/www/imagedrop` even with correct file permissions, you might need to set the SELinux context:
+    ```bash
+    sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/imagedrop(/.*)?"
+    sudo restorecon -Rv /var/www/imagedrop
+    ```
+    For `public/uploads` if Nginx also needs to write (though usually it only reads, Node.js writes):
+    ```bash
+    sudo semanage fcontext -a -t httpd_sys_rw_content_t "/var/www/imagedrop/public/uploads(/.*)?"
+    sudo restorecon -Rv /var/www/imagedrop/public/uploads
+    ```
+    **Note:** `semanage` might require `policycoreutils-python-utils` or `policycoreutils-python` package.
+    ```bash
+    sudo yum install policycoreutils-python-utils # Or policycoreutils-python
+    ```
+*   **Check Audit Log for Denials:**
+    If issues persist, check the SELinux audit log for denials:
+    ```bash
+    sudo ausearch -m avc -ts recent
+    # or
+    sudo cat /var/log/audit/audit.log | audit2allow -m local_nginx_policy
+    ```
+    This can help identify specific permissions Nginx is being denied by SELinux.
+
+### 13. Security Considerations Summary (Nginx)
 
 *   **`DATABASE_URL`**: Ensure it's correctly set in `.env.local` and secured.
 *   **`JWT_SECRET_KEY`**: Must be strong and unique in `.env.local`.
-*   **File Permissions**: Critical for `public/uploads`. `node_user` needs write, `www-data` needs read/execute. **Default ACLs (`setfacl -dR`) are vital.**
+*   **File Permissions**: Critical for `public/uploads`. `node_user` needs write, Nginx user (`www-data` or `nginx`) needs read/execute. **Default ACLs (`setfacl -dR`) are vital.**
 *   **Nginx Configuration**: Review `/uploads/` location block for security (deny non-image files) and caching.
 *   **Input Validation**: Server actions use Zod (already in place).
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
+*   **SELinux (CentOS)**: Configure appropriately if enabled.
 
-### 13. Troubleshooting (Nginx)
+### 14. Troubleshooting (Nginx)
 
 *   **Login Fails / Database Connection Issues:**
     *   Verify `DATABASE_URL` in `/var/www/imagedrop/.env.local`.
     *   Check `pm2 logs imagedrop` for database connection errors.
     *   Ensure PostgreSQL is running and accessible (firewall, `pg_hba.conf`).
+    *   On CentOS, check SELinux logs (`ausearch -m avc -ts recent`) if Node.js can't connect to DB.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Nginx is NOT serving the static image from `/uploads/`. Request is proxied to Next.js, which returns HTML (likely 404).
     *   **Primary Causes & Solutions:**
-        1.  **Permissions for `www-data`**: `www-data` must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
+        1.  **Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
             *   **Action**: Immediately after a failed upload, SSH into server.
                 Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
-                Check effective permissions for `www-data` using `namei`:
+                Check effective permissions for Nginx user (replace `www-data` with `nginx` if on CentOS):
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 ```
-                This will show permissions for each component of the path from `www-data`'s perspective. Look for `Permission denied` or missing `r` (for files) / `x` (for directories).
-                Check ACLs:
+                This will show permissions for each component of the path from Nginx user's perspective. Look for `Permission denied` or missing `r` (for files) / `x` (for directories).
+                Check ACLs (replace `www-data` with `nginx` if on CentOS):
                 ```bash
                 getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 # ... and parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
-                Ensure `user:www-data` has `r-x` on directories and `r--` on the file. **The default ACL `default:user:www-data:r-x` for parent directories (like `public/uploads/users/`) is key for new files/folders created by `node_user`.**
+                Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. **The default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
         2.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`).
         3.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server.
         4.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in `/uploads/` block are correctly set and Nginx reloaded.
-    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`. Look for errors related to the specific image URL.
+        5.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files or proxying. Check `ausearch -m avc -ts recent`.
+    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit` in `next.config.ts`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop`.
-*   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop`. Verify it can connect to the database.
+*   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop`. Verify it can connect to the database. SELinux might also block Nginx proxying to port 3000 (see Step 12).
 
-### 14. Updating the Application (Nginx)
+### 15. Updating the Application (Nginx)
 
 1.  `cd /var/www/imagedrop`
 2.  `git pull origin main` (or your branch)
@@ -469,28 +551,39 @@ sudo certbot renew --dry-run # Test renewal
 
 ---
 
-## Deployment on Ubuntu with Apache & PM2
+## Deployment on Ubuntu/CentOS with Apache & PM2
 
-This guide outlines deploying ImageDrop on an Ubuntu server using Apache as a reverse proxy and PM2 as a process manager. Steps 1-5 and 7-8 (Prerequisites, Node/PM2, App Clone, Env Vars, Build & DB Migrations, File Permissions for `public/uploads`, PM2 Start) are largely similar to the Nginx setup. **Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`. Also ensure OpenSSL 1.1 is installed if needed by Prisma.**
+This guide outlines deploying ImageDrop on a Linux server using Apache as a reverse proxy and PM2 as a process manager. Steps 1-5 and 7-8 (Prerequisites, Node/PM2, App Clone, Env Vars, Build & DB Migrations, File Permissions for `public/uploads`, PM2 Start) are largely similar to the Nginx setup. **Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`.**
 
 **Follow Steps 1-5 from the Nginx section first, ensuring database setup and `DATABASE_URL` is correctly set in `.env.local`.** Then proceed with Apache-specific steps.
 
 ### 9. Install and Configure Apache
 
 ```bash
-sudo apt update
-sudo apt install -y apache2
+sudo apt update # Ubuntu
+# sudo yum update -y # CentOS
+
+sudo apt install -y apache2 # Ubuntu
+# sudo yum install -y httpd # CentOS
 ```
 
 Enable necessary Apache modules:
 ```bash
-sudo a2enmod proxy proxy_http headers rewrite ssl expires
-sudo systemctl restart apache2
+sudo a2enmod proxy proxy_http headers rewrite ssl expires # Ubuntu
+# For CentOS, modules like proxy and proxy_http are often loaded by default.
+# You might need to check /etc/httpd/conf.modules.d/ for loaded modules.
+# `sudo apachectl -M` can list loaded modules.
+sudo systemctl restart apache2 # Ubuntu
+# sudo systemctl enable httpd && sudo systemctl start httpd # CentOS
+# sudo systemctl restart httpd # CentOS
 ```
 
 Create an Apache VirtualHost configuration:
 ```bash
+# Ubuntu:
 sudo nano /etc/apache2/sites-available/imagedrop.conf
+# CentOS:
+# sudo nano /etc/httpd/conf.d/imagedrop.conf
 ```
 
 Paste the following, replacing `your_domain.com`. `LimitRequestBody` should match or exceed Next.js `bodySizeLimit` (currently '10mb').
@@ -500,8 +593,10 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
     ServerName your_domain.com
     # ServerAlias www.your_domain.com # Uncomment if using www
 
-    ErrorLog ${APACHE_LOG_DIR}/imagedrop_error.log
-    CustomLog ${APACHE_LOG_DIR}/imagedrop_access.log combined
+    ErrorLog ${APACHE_LOG_DIR}/imagedrop_error.log    # Ubuntu: /var/log/apache2/
+    CustomLog ${APACHE_LOG_DIR}/imagedrop_access.log combined # Ubuntu
+    # CentOS: ErrorLog /var/log/httpd/imagedrop_error_log
+    # CentOS: CustomLog /var/log/httpd/imagedrop_access_log combined
 
     # Set to match or exceed Next.js bodySizeLimit (e.g., 10MB = 10485760 bytes)
     LimitRequestBody 10485760
@@ -551,69 +646,113 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
 
 Enable site and restart/reload Apache:
 ```bash
+# Ubuntu:
 sudo a2ensite imagedrop.conf
-sudo systemctl reload apache2 # Or sudo systemctl restart apache2
-```
-Test Apache config: `sudo apache2ctl configtest`
+sudo systemctl reload apache2
+# CentOS: Configuration in conf.d is usually automatically loaded.
+# sudo systemctl reload httpd
 
-### 10. Configure Firewall (UFW) for Apache
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Apache Full' # For HTTP (port 80) and HTTPS (port 443)
-# Or 'Apache' for HTTP only if not using SSL
-sudo ufw enable
-sudo ufw status
+# Test Apache config:
+sudo apache2ctl configtest # Ubuntu
+# sudo httpd -t # CentOS
 ```
+
+### 10. Configure Firewall (UFW for Ubuntu, firewalld for CentOS)
+
+*   **For Ubuntu (UFW):**
+    ```bash
+    sudo ufw allow OpenSSH
+    sudo ufw allow 'Apache Full' # For HTTP (port 80) and HTTPS (port 443)
+    sudo ufw enable
+    sudo ufw status
+    ```
+*   **For CentOS (firewalld):**
+    ```bash
+    sudo firewall-cmd --permanent --add-service=ssh
+    sudo firewall-cmd --permanent --add-service=http
+    # sudo firewall-cmd --permanent --add-service=https
+    sudo firewall-cmd --reload
+    sudo firewall-cmd --list-all
+    ```
 
 ### 11. (Optional) Secure Apache with SSL using Certbot
 
 If you have a domain:
+*   **For Ubuntu:**
+    ```bash
+    sudo apt install -y certbot python3-certbot-apache
+    sudo certbot --apache -d your_domain.com # Add -d www.your_domain.com if needed
+    ```
+*   **For CentOS:**
+    ```bash
+    sudo yum install certbot python3-certbot-apache # Or python2-certbot-apache
+    sudo certbot --apache -d your_domain.com
+    ```
+Certbot will modify your Apache config for SSL.
 ```bash
-sudo apt install -y certbot python3-certbot-apache
-sudo certbot --apache -d your_domain.com # Add -d www.your_domain.com if needed
-# Certbot will modify your Apache config for SSL.
-sudo systemctl restart apache2
+sudo systemctl restart apache2 # Ubuntu
+# sudo systemctl restart httpd # CentOS
 sudo certbot renew --dry-run # Test renewal
 ```
 
-### 12. Security Considerations Summary (Apache)
+### 12. (CentOS Specific) SELinux Configuration for Apache
+
+If SELinux is enabled on CentOS, similar to Nginx, you'll need to ensure Apache can proxy and access files.
+
+*   **Allow Apache to connect to network (for proxying):**
+    ```bash
+    sudo setsebool -P httpd_can_network_connect 1
+    ```
+*   **Set correct SELinux context for web content (if Apache has issues reading files):**
+    ```bash
+    sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/imagedrop(/.*)?"
+    sudo restorecon -Rv /var/www/imagedrop
+    ```
+    For `public/uploads` if Apache needed write (unlikely, Node.js writes):
+    ```bash
+    sudo semanage fcontext -a -t httpd_sys_rw_content_t "/var/www/imagedrop/public/uploads(/.*)?"
+    sudo restorecon -Rv /var/www/imagedrop/public/uploads
+    ```
+    Install `policycoreutils-python-utils` if `semanage` is not found.
+*   **Check Audit Log for Denials:**
+    ```bash
+    sudo ausearch -m avc -ts recent
+    ```
+
+### 13. Security Considerations Summary (Apache)
 
 *   **`DATABASE_URL`**: Secure and correct in `.env.local`.
 *   **`JWT_SECRET_KEY`**: Strong and unique in `.env.local`.
-*   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data`) needs read/execute. **Default ACLs are vital.** (Follow Step 7 from Nginx section, replacing Nginx mentions with Apache/`www-data` where contextually appropriate for `www-data`'s needs).
+*   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7 from Nginx section, replacing Nginx user with Apache user where appropriate).
 *   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security.
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
+*   **SELinux (CentOS)**: Configure if enabled.
 
-### 13. Troubleshooting (Apache)
+### 14. Troubleshooting (Apache)
 
-*   **Login Fails / Database Issues:** Verify `DATABASE_URL`. Check `pm2 logs imagedrop`. Ensure PostgreSQL is running and accessible.
+*   **Login Fails / Database Issues:** Verify `DATABASE_URL`. Check `pm2 logs imagedrop`. Ensure PostgreSQL is running and accessible. Check SELinux.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
     *   Indicates Apache is NOT serving the static image from `/uploads/`. Request is proxied to Next.js.
     *   **Primary Causes & Solutions (Similar to Nginx):**
-        1.  **Permissions for `www-data`**: `www-data` must have read (`r`) on image, execute (`x`) on parent dirs.
+        1.  **Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
             *   **Action**: Immediately after failed upload:
-                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
-                Check effective permissions for `www-data` using `namei`:
+                Identify exact image path.
+                Check effective permissions for Apache user (replace `www-data` with `apache` if on CentOS):
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 ```
-                Check ACLs:
-                ```bash
-                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
-                # And parent directories
-                ```
-                Ensure `www-data` has `r-x` on directories, `r--` on file. Default ACLs are key.
-        2.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` and `sudo systemctl reload apache2` (or `restart`).
+                Check ACLs. Ensure Apache user has `r-x` on directories, `r--` on file. Default ACLs are key.
+        2.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache.
         3.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**.
-        4.  **Apache Caching**: Ensure cache-busting headers are set in the `<Directory /var/www/imagedrop/public/uploads/>` block.
-    *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` and `access.log`.
+        4.  **Apache Caching**: Ensure cache-busting headers are set.
+        5.  **SELinux (CentOS)**: Check `ausearch -m avc -ts recent`.
+    *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` (Ubuntu) or `/var/log/httpd/imagedrop_error_log` (CentOS).
     *   **Body Size Limits:** Check Apache `LimitRequestBody` vs. Next.js `bodySizeLimit`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop`.
-*   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop`. Verify database connectivity.
+*   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop`. Verify database connectivity. SELinux might block Apache proxying.
 
-### 14. Updating the Application (Apache)
+### 15. Updating the Application (Apache)
 
 1.  `cd /var/www/imagedrop`
 2.  `git pull origin main`
@@ -622,7 +761,7 @@ sudo certbot renew --dry-run # Test renewal
 5.  `npx prisma migrate deploy` (if `schema.prisma` changed)
 6.  `npm run build`
 7.  `pm2 restart imagedrop`
-8.  If Apache config changed: `sudo apache2ctl configtest && sudo systemctl reload apache2`.
+8.  If Apache config changed: `sudo apache2ctl configtest && sudo systemctl reload apache2` (Ubuntu) or `sudo httpd -t && sudo systemctl reload httpd` (CentOS).
 
 ---
 
@@ -651,16 +790,14 @@ sudo certbot renew --dry-run # Test renewal
         DELETE FROM "User";
         -- To reset auto-incrementing IDs if necessary (optional, Prisma handles UUIDs fine without this for User/FolderShare/Image)
         -- For SiteSetting if it uses an auto-incrementing ID and you want it to start from 1 again:
-        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1; 
+        -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1;
         ```
         Exit `psql` with `\q`.
     *   **Option C: Full Reset (Drop Tables & Re-migrate - Use with caution)**
         If you want a complete reset of the schema and data:
         ```bash
-        # First, drop existing tables (example, adjust if your tables differ due to migration history)
-        # sudo -u postgres psql -d imagedrop -c "DROP TABLE IF EXISTS \"_prisma_migrations\", \"Image\", \"FolderShare\", \"SiteSetting\", \"User\" CASCADE;"
-        # Then, re-apply migrations to recreate the schema:
-        npx prisma migrate reset --force # This drops DB, reapplies migrations, and runs seed (if any)
+        # This drops DB, reapplies migrations, and runs seed (if any)
+        npx prisma migrate reset --force
         # OR if you want to control it more:
         # npx prisma db push --force-reset # This will reset your database and re-apply the schema
         # npx prisma migrate deploy # To ensure migration history is also up-to-date if using 'reset'
@@ -679,7 +816,7 @@ sudo certbot renew --dry-run # Test renewal
     ```bash
     sudo mkdir -p public/uploads/users
     sudo chown node_user:node_user public/uploads/users # Replace node_user with your PM2 user
-    # Re-apply default ACLs if you are using them
+    # Re-apply default ACLs if you are using them (replace www-data with nginx or apache if needed)
     # sudo setfacl -dR -m u:node_user:rwx public/uploads
     # sudo setfacl -dR -m u:www-data:rx public/uploads
     ```
@@ -688,5 +825,3 @@ sudo certbot renew --dry-run # Test renewal
     *   The next user to sign up will become the admin. Default site settings will be applied by the application if the `SiteSetting` table is empty (the application logic handles seeding this).
 
 Your ImageDrop application should now be running with your chosen web server and a fresh PostgreSQL database!
-
-    
