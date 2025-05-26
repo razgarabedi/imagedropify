@@ -9,8 +9,8 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 
 *   **Image Uploading:** Users can upload images (JPG, PNG, GIF, WebP).
 *   **Folder Management:** Logged-in users can create folders to organize their images and upload directly to specific folders.
-*   **Image Management:** Users can view, rename, and delete their own uploaded images.
-*   **Folder Sharing:** Users can generate unique, shareable public links for their custom folders.
+*   **Image Management:** Users can view, rename, and delete their own uploaded images. Image metadata is stored in PostgreSQL.
+*   **Folder Sharing:** Users can generate unique, shareable public links for their custom folders. Share metadata is stored in PostgreSQL.
 *   **Database-backed Authentication (PostgreSQL + Prisma):**
     *   User accounts are managed in a PostgreSQL database.
     *   Password hashing (bcrypt) is implemented.
@@ -232,7 +232,7 @@ npm run build
 
 ### 6. Initial Admin User
 
-*   **First Signup is Admin:** The **first user to sign up** after the application starts (and the database is empty) will automatically become an administrator with `approved` status.
+*   **First Signup is Admin:** The **first user to sign up** after the application starts (and the database is empty) will automatically become an administrator with `Approved` status.
 
 ### 7. Set File Ownership and Permissions (Focus on `public/uploads`)
 
@@ -250,7 +250,7 @@ sudo chown -R node_user:node_user /var/www/imagedrop
 sudo chmod 750 /var/www/imagedrop # Owner: rwx, Group: rx, Others: ---
 
 # 3. Permissions for `public/uploads` directory
-#    - `node_user` (running PM2) needs `rwx` to create `users/<userId>/<folderName>/YYYY/MM/DD/` and write images.
+#    - `node_user` (running PM2) needs `rwx` to create `users/<userId>/<folderName>/` and write images.
 #    - `www-data` (running Nginx) needs `rx` to traverse directories and `r` to read image files.
 
 # Create base uploads structure if it doesn't exist (application code also attempts this)
@@ -281,14 +281,14 @@ sudo chmod o+x /var/www/imagedrop/public
 
 # Verify (example for ACL method):
 # getfacl /var/www/imagedrop/public/uploads
-# After an upload, check: getfacl /var/www/imagedrop/public/uploads/users/<some_user_id>/<some_folder>/.../<image.png>
+# After an upload, check: getfacl /var/www/imagedrop/public/uploads/users/<some_user_id>/<some_folder>/<image.png>
 # Ensure www-data has 'r-x' on directories and 'r--' on the image file.
 ```
 **Important Notes on Permissions:**
 *   Replace `node_user` with the actual username that will run the `pm2` process.
 *   **ACLs are strongly recommended.** The `setfacl -dR -m u:www-data:rx public/uploads` command is critical for new files/folders to inherit correct permissions for Nginx.
 *   The application code attempts to set permissions `0o755` for directories and `0o644` for files during creation. This acts as a fallback.
-*   If issues persist, use `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/.../image.png` immediately after an upload to trace permissions for each component of the path for the `www-data` user.
+*   If issues persist, use `sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>` immediately after an upload to trace permissions for each component of the path for the `www-data` user.
 
 ### 8. Start Application with PM2
 
@@ -363,7 +363,7 @@ server {
             try_files $uri $uri/ =404; # Serve the image or return 404 if not found
         }
         # Deny access to any other file types or directory listings in /uploads/
-        location ~ ^/uploads/ { # More specific match to avoid conflicts if /uploads/ itself should be accessible for some reason (unlikely here)
+        location ~ ^/uploads/(.*)$ { # Match any file/path within /uploads/
              deny all;
              return 403; # Or 404 if you prefer to hide existence
         }
@@ -436,15 +436,15 @@ sudo certbot renew --dry-run # Test renewal
     *   **Primary Causes & Solutions:**
         1.  **Permissions for `www-data`**: `www-data` must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
             *   **Action**: Immediately after a failed upload, SSH into server.
-                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>`.
+                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for `www-data` using `namei`:
                 ```bash
-                sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 ```
                 This will show permissions for each component of the path from `www-data`'s perspective. Look for `Permission denied` or missing `r` (for files) / `x` (for directories).
                 Check ACLs:
                 ```bash
-                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 # ... and parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` has `r-x` on directories and `r--` on the file. **The default ACL `default:user:www-data:r-x` for parent directories (like `public/uploads/users/`) is key for new files/folders created by `node_user`.**
@@ -594,9 +594,14 @@ sudo certbot renew --dry-run # Test renewal
     *   **Primary Causes & Solutions (Similar to Nginx):**
         1.  **Permissions for `www-data`**: `www-data` must have read (`r`) on image, execute (`x`) on parent dirs.
             *   **Action**: Immediately after failed upload:
+                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
+                Check effective permissions for `www-data` using `namei`:
                 ```bash
-                sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
-                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<YYYY>/<MM>/<DD>/<image.png>
+                sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
+                ```
+                Check ACLs:
+                ```bash
+                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 # And parent directories
                 ```
                 Ensure `www-data` has `r-x` on directories, `r--` on file. Default ACLs are key.
@@ -631,7 +636,7 @@ sudo certbot renew --dry-run # Test renewal
         ```bash
         npx prisma studio
         ```
-        Then, in the Prisma Studio web interface, navigate to the `User`, `SiteSetting`, and `FolderShare` models and delete all records.
+        Then, in the Prisma Studio web interface, navigate to the `User`, `SiteSetting`, `Image`, and `FolderShare` models and delete all records.
     *   **Option B: psql (Command Line)**
         Connect to your PostgreSQL database using `psql`:
         ```bash
@@ -640,10 +645,11 @@ sudo certbot renew --dry-run # Test renewal
         ```
         Then run the following SQL commands:
         ```sql
+        DELETE FROM "Image";      -- Order matters due to foreign keys
         DELETE FROM "FolderShare";
         DELETE FROM "SiteSetting";
         DELETE FROM "User";
-        -- To reset auto-incrementing IDs if necessary (optional, Prisma handles UUIDs fine without this for User/FolderShare)
+        -- To reset auto-incrementing IDs if necessary (optional, Prisma handles UUIDs fine without this for User/FolderShare/Image)
         -- For SiteSetting if it uses an auto-incrementing ID and you want it to start from 1 again:
         -- ALTER SEQUENCE "SiteSetting_id_seq" RESTART WITH 1; 
         ```
@@ -652,7 +658,7 @@ sudo certbot renew --dry-run # Test renewal
         If you want a complete reset of the schema and data:
         ```bash
         # First, drop existing tables (example, adjust if your tables differ due to migration history)
-        # sudo -u postgres psql -d imagedrop -c "DROP TABLE IF EXISTS \"_prisma_migrations\", \"FolderShare\", \"SiteSetting\", \"User\" CASCADE;"
+        # sudo -u postgres psql -d imagedrop -c "DROP TABLE IF EXISTS \"_prisma_migrations\", \"Image\", \"FolderShare\", \"SiteSetting\", \"User\" CASCADE;"
         # Then, re-apply migrations to recreate the schema:
         npx prisma migrate reset --force # This drops DB, reapplies migrations, and runs seed (if any)
         # OR if you want to control it more:
