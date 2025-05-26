@@ -9,4 +9,5 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
-export const POST_UPLOAD_DELAY_MS = 2000; // Increased from 1000ms to 2000ms for diagnostics
+// Increased for diagnostic purposes. If this helps, it points to a severe timing issue on the server.
+export const POST_UPLOAD_DELAY_MS = 3000; // Increased to 3000ms (3 seconds)

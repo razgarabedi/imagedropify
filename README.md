@@ -7,8 +7,8 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 
 ## Core Features
 
-*   **Image Uploading:** Users can upload images (JPG, PNG, GIF, WebP).
-*   **Folder Management:** Logged-in users can create folders to organize their images and upload directly to specific folders.
+*   **Image Uploading:** Users can upload images (JPG, PNG, GIF, WebP) to specific folders or a default "Uploads" folder.
+*   **Folder Management:** Logged-in users can create folders to organize their images.
 *   **Image Management:** Users can view, rename, and delete their own uploaded images. Image metadata is stored in PostgreSQL.
 *   **Folder Sharing:** Users can generate unique, shareable public links for their custom folders. Share metadata is stored in PostgreSQL.
 *   **Database-backed Authentication (PostgreSQL + Prisma):**
@@ -196,7 +196,7 @@ It's best practice to run your Node.js application under a dedicated, non-root u
     # Optionally, add to sudo group if this user needs to perform admin tasks (be cautious)
     sudo usermod -aG sudo node_user
     # Switch to the new user for subsequent steps:
-    su - node_user
+    # su - node_user
     ```
 
 *   **For CentOS:**
@@ -206,7 +206,7 @@ It's best practice to run your Node.js application under a dedicated, non-root u
     # Optionally, add to wheel group for sudo privileges (be cautious)
     sudo usermod -aG wheel node_user
     # Switch to the new user for subsequent steps:
-    su - node_user
+    # su - node_user
     ```
 **From this point on, commands for installing dependencies, building the app, and managing PM2 should ideally be run as this `node_user`. If you use `sudo` for any of these, ensure file ownership is corrected afterwards.** We'll refer to this user as `your_deployment_user` or `node_user`.
 
@@ -584,19 +584,19 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     *   Indicates Nginx is NOT serving the static image from `/uploads/`. Request is proxied to Next.js, which returns HTML (likely 404).
     *   **Primary Causes & Solutions:**
         1.  **Ownership/Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
-            *   **Action**: Immediately after a failed upload, SSH into server.
-                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
-                Check effective permissions for Nginx user (replace `www-data` with `nginx` if on CentOS):
+            *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
+                Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
+                Check effective permissions for the Nginx user (replace `www-data` with `nginx` if on CentOS):
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 ```
-                This will show permissions for each component of the path from Nginx user's perspective. Look for `Permission denied` or missing `r` (for files) / `x` (for directories).
-                Check ACLs (replace `www-data` with `nginx` if on CentOS):
+                This command traces permissions for each component of the path *from the Nginx user's perspective*. Look for any `Permission denied` messages or missing `r` (for files) / `x` (for directories). If this fails, ACLs are not set or not effective.
+                Also verify ACLs:
                 ```bash
                 getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
-                # ... and parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
+                # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
-                Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. **The default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
+                Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
         2.  **Files Owned by `root:root`**: If `namei -l` or `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8).** Correct the PM2 setup and then fix ownership of existing `public/uploads` (see Step 7).
         3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`).
         4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server.
@@ -638,10 +638,10 @@ Follow Step 7 from the Nginx deployment section, but replace the Nginx user (`ww
         ```bash
         # Ensure 'node_user' is the user running PM2.
         # Ensure 'apache' is the user Apache runs as on CentOS.
-        setfacl -R -m u:node_user:rwx /var/www/imagedrop/public/uploads
-        setfacl -R -m u:apache:rx /var/www/imagedrop/public/uploads
-        setfacl -dR -m u:node_user:rwx /var/www/imagedrop/public/uploads
-        setfacl -dR -m u:apache:rx /var/www/imagedrop/public/uploads
+        sudo setfacl -R -m u:node_user:rwx /var/www/imagedrop/public/uploads
+        sudo setfacl -R -m u:apache:rx /var/www/imagedrop/public/uploads
+        sudo setfacl -dR -m u:node_user:rwx /var/www/imagedrop/public/uploads
+        sudo setfacl -dR -m u:apache:rx /var/www/imagedrop/public/uploads
         ```
     *   For Ubuntu with Apache, replace `apache` with `www-data` in the commands above.
 
@@ -847,13 +847,19 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
     *   Indicates Apache is NOT serving the static image from `/uploads/`. Request is proxied to Next.js.
     *   **Primary Causes & Solutions (Similar to Nginx):**
         1.  **Ownership/Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
-            *   **Action**: Immediately after failed upload:
-                Identify exact image path, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
-                Check effective permissions for Apache user (replace `www-data` with `apache` if on CentOS):
+            *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
+                Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
+                Check effective permissions for the Apache user (replace `www-data` with `apache` if on CentOS):
                 ```bash
                 sudo -u www-data namei -l /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
                 ```
-                Check ACLs. Ensure Apache user has `r-x` on directories, `r--` on file. Default ACLs are key.
+                This command traces permissions for each component of the path *from the Apache user's perspective*. Look for any `Permission denied` messages or missing `r` (for files) / `x` (for directories). If this fails, ACLs are not set or not effective.
+                Also verify ACLs:
+                ```bash
+                getfacl /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>
+                # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
+                ```
+                Ensure `user:www-data` (or `user:apache`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `apache`) for parent directories is key for new files/folders created by `node_user`.**
         2.  **Files Owned by `root:root`**: If new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8 of Nginx section).** Correct the PM2 setup and then fix ownership of existing `public/uploads`.
         3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache.
         4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**.
