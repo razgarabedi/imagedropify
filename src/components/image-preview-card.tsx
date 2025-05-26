@@ -36,13 +36,13 @@ import {
 import { Label } from '@/components/ui/label';
 
 interface ImagePreviewCardProps {
-  id: string; 
-  src: string; 
-  url: string; 
-  name: string; 
-  uploaderId: string; 
-  originalName: string; 
-  folderName: string; 
+  id: string;
+  src: string;
+  url: string;
+  name: string; // Assumed to be always a string by parent component
+  uploaderId: string;
+  originalName: string; // Assumed to be always a string by parent component
+  folderName: string;
   onDelete?: (imageDbId: string) => void;
   onRename?: (oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => void;
 }
@@ -56,12 +56,20 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
   const [isCopied, setIsCopied] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [fullUrl, setFullUrl] = useState('');
-  
+
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  const [newNameInput, setNewNameInput] = useState(name.substring(0, name.lastIndexOf('.')));
+
+  // Robustly get name without extension
+  const getNameWithoutExtension = (filename: string) => {
+    if (typeof filename !== 'string' || !filename) return '';
+    const lastDotIndex = filename.lastIndexOf('.');
+    return lastDotIndex > 0 ? filename.substring(0, lastDotIndex) : filename;
+  };
+
+  const [newNameInput, setNewNameInput] = useState(getNameWithoutExtension(name));
 
   useEffect(() => {
-    setNewNameInput(name.substring(0, name.lastIndexOf('.')));
+    setNewNameInput(getNameWithoutExtension(name));
   }, [name]);
 
   const [deleteActionState, deleteFormAction, isDeletePending] = useActionState(deleteImage, initialDeleteState);
@@ -69,14 +77,19 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
 
   useEffect(() => {
     const timer = setTimeout(() => setIsVisible(true), 50);
-    setFullUrl(url); 
+    // Construct full URL for copying. Assumes `url` prop is the relative path.
+    if (typeof window !== 'undefined' && url) {
+        setFullUrl(window.location.origin + url);
+    } else if (url) {
+        setFullUrl(url); // Fallback for server or if origin is not available
+    }
     return () => clearTimeout(timer);
   }, [url]);
 
   useEffect(() => {
     if (!isDeletePending && deleteActionState.success && deleteActionState.deletedImageId) {
         toast({ title: 'Image Deleted', description: `${originalName} has been successfully deleted.` });
-        if (onDelete) onDelete(deleteActionState.deletedImageId); 
+        if (onDelete) onDelete(deleteActionState.deletedImageId);
     } else if (!isDeletePending && deleteActionState.error) {
         toast({ variant: 'destructive', title: 'Delete Failed', description: deleteActionState.error });
     }
@@ -86,11 +99,11 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
     if (!isRenamePending && renameActionState.success && renameActionState.data) {
       toast({ title: 'Image Renamed', description: `Renamed to "${renameActionState.data.newName}".` });
       if (onRename) onRename(id, renameActionState.data.newId, renameActionState.data.newName, renameActionState.data.newUrl);
-      setIsRenameDialogOpen(false); 
+      setIsRenameDialogOpen(false);
     } else if (!isRenamePending && renameActionState.error) {
       toast({ variant: 'destructive', title: 'Rename Failed', description: renameActionState.error });
     }
-  }, [renameActionState, isRenamePending, toast, id, onRename, name]);
+  }, [renameActionState, isRenamePending, toast, id, onRename]);
 
 
   const handleCopyUrl = async () => {
@@ -99,7 +112,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
       await navigator.clipboard.writeText(fullUrl);
       toast({ title: 'URL Copied!', description: 'Image URL copied to clipboard.' });
       setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000); 
+      setTimeout(() => setIsCopied(false), 2000);
     } catch (err) {
       toast({ variant: 'destructive', title: 'Copy Failed', description: 'Could not copy URL.' });
     }
@@ -107,7 +120,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
 
   const handleDelete = () => {
     startTransition(() => {
-        deleteFormAction(id); 
+        deleteFormAction(id);
     });
   };
 
@@ -117,7 +130,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
         return;
     }
     const formData = new FormData();
-    formData.append('currentImageId', id); 
+    formData.append('currentImageId', id);
     formData.append('newNameWithoutExtension', newNameInput.trim());
     startTransition(() => {
         renameFormAction(formData);
@@ -139,8 +152,8 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
           <div className="flex items-center space-x-1">
             <Dialog open={isRenameDialogOpen} onOpenChange={(open) => {
               setIsRenameDialogOpen(open);
-              if (open) { 
-                setNewNameInput(name.substring(0, name.lastIndexOf('.')));
+              if (open) {
+                setNewNameInput(getNameWithoutExtension(name));
               }
             }}>
               <DialogTrigger asChild>
@@ -197,7 +210,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
         <Image
           src={src} alt={`Preview of ${originalName}`} fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
           style={{objectFit: "cover"}} className="transition-transform duration-300 group-hover:scale-105"
-          data-ai-hint="uploaded image" priority={false} 
+          data-ai-hint="uploaded image" priority={false}
         />
       </CardContent>
       <CardFooter className="p-4 flex-col items-start space-y-2">

@@ -7,19 +7,19 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { 
-    getUserImages, 
-    type UserImageData, 
-    createFolderAction, 
+import {
+    getUserImages,
+    type UserImageData,
+    createFolderAction,
     listUserFolders,
     type UserFolder,
-    type FolderActionResponse as ImageFolderActionResponse 
+    type FolderActionResponse as ImageFolderActionResponse
 } from '@/app/actions/imageActions';
-import { 
-    createShareLinkAction, 
-    revokeShareLinkAction, 
+import {
+    createShareLinkAction,
+    revokeShareLinkAction,
     getActiveShareLinkForFolder,
-    type ShareActionResponse 
+    type ShareActionResponse
 } from '@/app/actions/shareActions';
 import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -42,13 +42,13 @@ import {
 } from "@/components/ui/select";
 
 interface DisplayImage {
-  id: string; 
-  name: string; 
-  previewSrc: string; 
-  url: string; 
-  uploaderId: string; 
+  id: string;
+  name: string;
+  previewSrc: string;
+  url: string;
+  uploaderId: string;
   folderName: string;
-  originalName: string; 
+  originalName: string;
 }
 
 const initialImageFolderActionState: ImageFolderActionResponse = { success: false };
@@ -66,7 +66,7 @@ export default function MyImagesPage() {
   const [newFolderName, setNewFolderName] = useState('');
   const [activeShareUrl, setActiveShareUrl] = useState<string | null>(null);
   const [isShareUrlCopied, setIsShareUrlCopied] = useState(false);
-  
+
   const [createFolderState, createFolderFormAction, isCreateFolderPending] = useActionState(createFolderAction, initialImageFolderActionState);
   const [createShareLinkState, createShareLinkFormAction, isCreateShareLinkPending] = useActionState(createShareLinkAction, initialShareActionState);
   const [revokeShareLinkState, revokeShareLinkFormAction, isRevokeShareLinkPending] = useActionState(revokeShareLinkAction, initialShareActionState);
@@ -77,7 +77,7 @@ export default function MyImagesPage() {
         setCurrentFolder(DEFAULT_FOLDER_NAME);
         return;
     }
-    if (!user) return; 
+    if (!user) return;
 
     try {
       const folders = await listUserFolders(user.id);
@@ -119,13 +119,13 @@ export default function MyImagesPage() {
     try {
       const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
-        id: img.id, 
-        name: img.name, 
-        previewSrc: img.url, 
-        url: img.url, 
+        id: img.id,
+        name: img.filename || '', // Ensure name is always a string
+        previewSrc: img.url,
+        url: img.url,
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName,
+        originalName: img.originalName || '', // Ensure originalName is always a string
       }));
       setUserImages(displayImages);
       fetchActiveShareLink(currentFolder);
@@ -151,14 +151,14 @@ export default function MyImagesPage() {
       fetchImagesForCurrentFolder();
     }
   }, [user, authLoading, currentFolder, fetchImagesForCurrentFolder]);
-  
+
   useEffect(() => {
     if (!isCreateFolderPending) {
         if (createFolderState.success && createFolderState.folderName) {
             toast({ title: 'Folder Created', description: `Folder "${createFolderState.folderName}" created successfully.` });
             setNewFolderName('');
             fetchUserFolders().then(() => {
-                 setCurrentFolder(createFolderState.folderName!); 
+                 setCurrentFolder(createFolderState.folderName!);
             });
         } else if (createFolderState.error) {
             toast({ variant: 'destructive', title: 'Create Folder Failed', description: createFolderState.error });
@@ -240,12 +240,12 @@ export default function MyImagesPage() {
     setUserImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl }
+          ? { ...image, id: newImageDbId, name: newName, url: newUrl, previewSrc: newUrl }
           : image
       )
     );
   }, []);
-  
+
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
   if (authLoading || (!user && !authLoading) ) {
@@ -305,7 +305,7 @@ export default function MyImagesPage() {
                     <form onSubmit={handleCreateFolderSubmit} className="flex gap-2 w-full sm:w-auto items-end">
                         <div className="flex-grow">
                             <Label htmlFor="newFolderName" className="mb-1 block text-sm font-medium">Create New Folder</Label>
-                            <Input 
+                            <Input
                                 id="newFolderName"
                                 type="text"
                                 placeholder="New folder name"
@@ -360,11 +360,11 @@ export default function MyImagesPage() {
             </CardContent>
           </CardHeader>
         </Card>
-        
+
         <p className="mt-1 mb-6 text-lg text-muted-foreground text-center">
             Viewing images in folder: <span className="font-semibold text-primary">{currentFolder}</span>
         </p>
-        
+
         <Separator className="my-8" />
 
         {isLoadingImages ? (
@@ -388,11 +388,11 @@ export default function MyImagesPage() {
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
              {userImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
               <ImagePreviewCard
-                key={image.id} 
+                key={image.id}
                 id={image.id}
                 src={image.previewSrc}
                 url={image.url}
-                name={image.name} 
+                name={image.name}
                 uploaderId={image.uploaderId}
                 originalName={image.originalName}
                 folderName={image.folderName}

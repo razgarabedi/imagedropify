@@ -4,11 +4,11 @@
 
 import React, { useState, useCallback, useEffect, ReactNode, useMemo } from 'react';
 import Image from 'next/image';
-import { ImageUploader } from '@/components/image-uploader'; // Removed ClientUploadedImageFile import
+import { ImageUploader } from '@/components/image-uploader';
 import { ImagePreviewCard } from '@/components/image-preview-card';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Separator } from '@/components/ui/separator';
-import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions'; 
+import { getUserImages, type UserImageData, listUserFolders, type UserFolder } from '@/app/actions/imageActions';
 import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
@@ -25,16 +25,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Folder, Image as ImageIconLucide } from 'lucide-react';
-import type { UploadedImageServerData } from '@/app/actions/imageActions'; // Import the correct type
+import type { UploadedImageServerData } from '@/app/actions/imageActions';
 
 interface DisplayImage {
-  id: string; 
-  name: string; 
-  previewSrc: string; 
-  url: string; 
-  uploaderId: string; 
+  id: string;
+  name: string;
+  previewSrc: string;
+  url: string;
+  uploaderId: string;
   folderName: string;
-  originalName: string; 
+  originalName: string;
 }
 
 const LATEST_IMAGES_COUNT = 8;
@@ -84,13 +84,13 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     try {
       const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
-        id: img.id, 
-        name: img.name, 
-        previewSrc: img.url, 
-        url: img.url, 
+        id: img.id,
+        name: img.filename || '', // Ensure name is always a string
+        previewSrc: img.url,
+        url: img.url,
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName,
+        originalName: img.originalName || '', // Ensure originalName is always a string
       }));
       setUploadedImages(displayImages);
     } catch (error) {
@@ -136,11 +136,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { ...image, name: newName, url: newUrl, previewSrc: newUrl } 
+          ? { ...image, id: newImageDbId, name: newName, url: newUrl, previewSrc: newUrl }
           : image
       )
     );
-    if (user) fetchLatestUserImages(); 
+    if (user) fetchLatestUserImages();
   }, [user, fetchLatestUserImages]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
@@ -213,7 +213,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             </Button>
           </section>
         )}
-        
+
         {!user && authLoading && (
              <section className="text-center py-16">
                 <Skeleton className="mx-auto rounded-lg mb-8 shadow-lg w-[300px] h-[200px]" />
@@ -234,7 +234,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             {isLoadingInitialImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
-                  <Card key={`skeleton-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
+                  <Card key={`skeleton-latest-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
                     <CardHeader className="p-4"><Skeleton className="h-5 w-3/4" /></CardHeader>
                     <CardContent className="p-0 aspect-[4/3] relative overflow-hidden"><Skeleton className="h-full w-full" /></CardContent>
                     <CardFooter className="p-4 flex-col items-start space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-4 w-1/2" /></CardFooter>
@@ -250,11 +250,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id} 
+                    key={image.id}
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
-                    name={image.name} 
+                    name={image.name}
                     uploaderId={image.uploaderId}
                     originalName={image.originalName}
                     folderName={image.folderName}
@@ -273,7 +273,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             )}
           </section>
         )}
-         {authLoading && user && ( 
+         {authLoading && user && (
             <section aria-labelledby="gallery-title">
                  <Skeleton className="h-8 w-1/2 mb-6 mx-auto sm:mx-0" />
                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -291,7 +291,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
       <footer className="py-8 text-center text-muted-foreground border-t">
         <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
-         <p className="text-xs mt-1">Images stored in `public/uploads/users/userId/folderName/YYYY/MM/DD/`.</p>
+         <p className="text-xs mt-1">Images stored in `public/uploads/users/userId/folderName/`.</p>
          <p className="text-xs mt-1">User data & image metadata now in PostgreSQL.</p>
       </footer>
     </div>
