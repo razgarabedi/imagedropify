@@ -48,7 +48,6 @@ async function ensureUploadDirsExist(userId: string, folderName: string): Promis
     await fs.mkdir(resolvedUserBase, { recursive: true, mode: 0o755 });
   } catch (error: any) {
     console.error(`CRITICAL: Failed to create base user directory '${resolvedUserBase}': ${error.message}`, error);
-    // Do not throw and prevent folderSpecificPath creation if base already exists (e.g. due to race condition or prior run)
     if (error.code !== 'EEXIST') {
         throw new Error(`Failed to prepare base user upload directory: ${resolvedUserBase}. Check server logs and directory permissions.`);
     }
@@ -95,7 +94,7 @@ export async function uploadImage(
     if (!user) {
         return { success: false, error: 'User not found.' };
     }
-    if (user.status !== 'Approved') {
+    if (user.status !== 'Approved') { // Check against capitalized status
        return { success: false, error: `Account status is '${user.status}'. Uploads require 'Approved' status.` };
     }
 
@@ -115,8 +114,8 @@ export async function uploadImage(
     
     const globalMaxUploadSizeMB = await getGlobalMaxUploadSizeMB();
     const userMaxSingleUploadMB = user.maxSingleUploadSizeMB;
-    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadMB !== undefined
-                                ? userMaxSingleUploadMB
+    const effectiveMaxSingleMB = userMaxSingleUploadMB !== null && userMaxSingleUploadSizeMB !== undefined
+                                ? userMaxSingleUploadSizeMB
                                 : globalMaxUploadSizeMB;
     const effectiveMaxSingleBytes = effectiveMaxSingleMB * 1024 * 1024;
 
@@ -147,7 +146,7 @@ export async function uploadImage(
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
       return { success: false, error: `Invalid file type. Accepted: JPG, PNG, GIF, WebP. Provided: ${file.type}` };
     }
-    const fileExtension = MIME_TO_EXTENSION[file.type] || path.extname(file.name); // Fallback to original ext if MIME not perfectly matched
+    const fileExtension = MIME_TO_EXTENSION[file.type] || path.extname(file.name);
     if (!fileExtension) {
       return { success: false, error: `Unsupported file type or unable to determine extension (${file.type}).` };
     }
@@ -171,7 +170,7 @@ export async function uploadImage(
     }
     
     try {
-      await fs.writeFile(filePathOnDiskLocal, buffer, { mode: 0o644 });
+      await fs.writeFile(filePathOnDiskLocal, buffer, { mode: 0o644 }); // Explicitly sets 0o644 (rw-r--r--)
       console.log(`File ${filePathOnDiskLocal} written successfully with mode 0o644.`);
       
       let fileAccessible = false;
@@ -209,9 +208,7 @@ export async function uploadImage(
       }
 
       // ***** DIAGNOSTIC HTTP FETCH *****
-      // This URL should match how Nginx/Apache serves the file publicly,
-      // but fetched from localhost as the Next.js server would do.
-      const internalCheckUrl = `http://localhost:${process.env.PORT || 3000}/uploads/users/${urlPathForDb}`;
+      const internalCheckUrl = `http://localhost:${process.env.PORT || 3000}/uploads/${urlPathForDb}`; // Corrected to use /uploads/ and then the urlPathForDb
       console.log(`[DIAGNOSTIC] Attempting internal HEAD request to: ${internalCheckUrl}`);
       try {
         const response = await fetch(internalCheckUrl, { method: 'HEAD' });
@@ -245,7 +242,6 @@ export async function uploadImage(
       return { success: true, data: imageRecord };
     } catch (error: any) {
       console.error('Failed to save file to disk or database:', filePathOnDiskLocal, error);
-      // Ensure filePathOnDiskLocal is defined before attempting unlink
       if (filePathOnDiskLocal) {
           try {
             await fs.unlink(filePathOnDiskLocal);
@@ -258,7 +254,6 @@ export async function uploadImage(
     }
   } catch (e: any) {
     console.error("Unexpected error in uploadImage action:", e);
-    // At this top level, filePathOnDiskLocal might not be set if error occurred before its assignment
     if (filePathOnDiskLocal) {
       try {
         await fs.unlink(filePathOnDiskLocal);
@@ -289,11 +284,6 @@ export async function getUserImages(
   if (targetFolderName !== undefined && targetFolderName !== null) {
     whereClause.folderName = targetFolderName;
   } else if (targetFolderName === undefined) { 
-     // If targetFolderName is explicitly undefined (not null), list from default.
-     // If targetFolderName is null, list from all folders (no folderName filter).
-     // This part needs care if `null` means "all folders".
-     // For now, assuming undefined means default, null means all (no filter).
-     // The current usage passes `DEFAULT_FOLDER_NAME` or a specific folder name, or `null` from admin actions.
      whereClause.folderName = DEFAULT_FOLDER_NAME; 
   }
   
@@ -308,7 +298,7 @@ export async function getUserImages(
 
     return imagesFromDb.map(img => ({
       ...img,
-      url: `/uploads/users/${img.urlPath}`, 
+      url: `/uploads/${img.urlPath}`, 
     }));
   } catch (error) {
     console.error(`Failed to fetch images for user ${userIdToQuery} from database:`, error);
@@ -345,10 +335,8 @@ export async function countUserImages(userId: string, targetFolderName?: string 
   
   const whereClause: any = { userId };
   if (targetFolderName !== undefined && targetFolderName !== null) {
-    // If targetFolderName is provided (and not null), filter by it.
     whereClause.folderName = targetFolderName;
   }
-  // If targetFolderName is null or undefined, count all images for the user (no folderName filter)
 
   try {
     return await prisma.image.count({ where: whereClause });
@@ -492,14 +480,11 @@ export async function renameImage(
     const oldDiskFilename = imageRecord.filename;
     const extension = path.extname(oldDiskFilename);
     if (!Object.values(MIME_TO_EXTENSION).includes(extension.toLowerCase())) {
-      // Also allow for cases where extension might be missing or slightly different (e.g. .jpeg vs .jpg)
-      // but the original MIME type from upload was valid. This is a loose check.
       const originalMimeExt = MIME_TO_EXTENSION[imageRecord.mimeType];
       if (!originalMimeExt || extension.toLowerCase() !== originalMimeExt.toLowerCase()) {
            console.warn(`Filename extension ${extension} does not match expected for MIME type ${imageRecord.mimeType}. Proceeding with original extension.`);
       }
     }
-
 
     const oldPrefixMatch = oldDiskFilename.match(/^(\d{13}-\d{1,10})-/);
     const prefix = oldPrefixMatch ? oldPrefixMatch[1] : `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
@@ -513,7 +498,7 @@ export async function renameImage(
         data: { 
             newId: imageRecord.id, 
             newName: imageRecord.filename, 
-            newUrl: `/uploads/users/${imageRecord.urlPath}`,
+            newUrl: `/uploads/${imageRecord.urlPath}`,
         } 
       };
     }
@@ -584,7 +569,7 @@ export async function renameImage(
         data: { 
             newId: updatedImageRecord.id, 
             newName: updatedImageRecord.filename, 
-            newUrl: `/uploads/users/${updatedImageRecord.urlPath}`, 
+            newUrl: `/uploads/${updatedImageRecord.urlPath}`, 
         } 
     };
   } catch (error: any) {
@@ -660,7 +645,7 @@ export async function createFolderAction(
         return { success: true, folderName: newFolderName };
     } catch (error: any) {
         console.error(`Failed to create folder ${newFolderName} for user ${userId}: ${error.message}`, error); 
-        if (error.message.includes('EEXIST')) { // Check if error message indicates folder already exists
+        if (error.message.includes('EEXIST') || (error.code && error.code === 'EEXIST')) {
             return { success: false, error: `Folder "${newFolderName}" already exists.` };
         }
         return { success: false, error: error.message || 'Failed to create folder on server.' };
@@ -692,7 +677,6 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
         
     } catch (error: any) {
         if (error.code === 'ENOENT') { 
-          // If the base user directory doesn't exist, create it and then return default.
           try {
             await fs.mkdir(userUploadsPath, { recursive: true, mode: 0o755 });
           } catch (mkdirError: any) {
@@ -705,7 +689,6 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
 
     if (!folders.some(f => f.name === DEFAULT_FOLDER_NAME)) {
        folders.unshift({ name: DEFAULT_FOLDER_NAME });
-       // Ensure the default "Uploads" folder exists physically if it's not listed
        try {
             const defaultFolderPath = path.join(userUploadsPath, DEFAULT_FOLDER_NAME);
             await fs.access(defaultFolderPath);
@@ -727,3 +710,5 @@ export async function listUserFolders(userIdFromSession?: string): Promise<UserF
     });
 }
   
+
+    
