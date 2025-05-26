@@ -44,8 +44,8 @@ import {
 interface DisplayImage {
   id: string;
   name: string;
-  previewSrc: string;
-  url: string;
+  previewSrc: string; // For next/image
+  url: string;         // Clean URL for copying, etc.
   uploaderId: string;
   folderName: string;
   originalName: string;
@@ -120,12 +120,12 @@ export default function MyImagesPage() {
       const imagesFromServer: UserImageData[] = await getUserImages(user.id, undefined, currentFolder);
       const displayImages: DisplayImage[] = imagesFromServer.map(img => ({
         id: img.id,
-        name: img.filename || '', // Ensure name is always a string
-        previewSrc: img.url,
-        url: img.url,
+        name: img.filename || '', 
+        previewSrc: `/uploads/users/${img.urlPath}`, // Use clean URL for preview here, cache-busting mainly for post-upload
+        url: `/uploads/users/${img.urlPath}`,    // Clean URL
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName || '', // Ensure originalName is always a string
+        originalName: img.originalName || '', 
       }));
       setUserImages(displayImages);
       fetchActiveShareLink(currentFolder);
@@ -234,13 +234,20 @@ export default function MyImagesPage() {
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
     setUserImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
+    // Optionally re-fetch if pagination or total counts matter here
   }, []);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
     setUserImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { ...image, id: newImageDbId, name: newName, url: newUrl, previewSrc: newUrl }
+          ? { 
+              ...image, 
+              id: newImageDbId, 
+              name: newName, 
+              url: newUrl, 
+              previewSrc: `${newUrl}?t=${Date.now()}` // Cache-bust if previewing immediately after rename
+            }
           : image
       )
     );
@@ -390,7 +397,7 @@ export default function MyImagesPage() {
               <ImagePreviewCard
                 key={image.id}
                 id={image.id}
-                src={image.previewSrc}
+                src={image.previewSrc} // Will be the clean URL for images loaded on this page
                 url={image.url}
                 name={image.name}
                 uploaderId={image.uploaderId}

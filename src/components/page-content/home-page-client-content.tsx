@@ -30,8 +30,8 @@ import type { UploadedImageServerData } from '@/app/actions/imageActions';
 interface DisplayImage {
   id: string;
   name: string;
-  previewSrc: string;
-  url: string;
+  previewSrc: string; // For next/image, potentially cache-busted
+  url: string;         // Clean URL for copying, etc.
   uploaderId: string;
   folderName: string;
   originalName: string;
@@ -86,8 +86,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id,
         name: img.filename || '', 
-        previewSrc: img.url,
-        url: img.url,
+        previewSrc: `/uploads/users/${img.urlPath}`, // Clean URL for subsequent loads
+        url: `/uploads/users/${img.urlPath}`, // Clean URL
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '', 
@@ -121,29 +121,54 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
   }, [needsImageFetch, authLoading, fetchLatestUserImages]);
 
   const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
+    // Construct the DisplayImage object for the newly uploaded image
+    // For the initial display, use a cache-busting query parameter for previewSrc
+    const newImage: DisplayImage = {
+      id: imageFile.id,
+      name: imageFile.filename,
+      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`, // Cache-busted for next/image
+      url: `/uploads/users/${imageFile.urlPath}`, // Clean URL for copy
+      uploaderId: imageFile.userId,
+      folderName: imageFile.folderName,
+      originalName: imageFile.originalName,
+    };
+
+    // If the uploaded image is to the default folder, add it to the displayed list
+    if (imageFile.folderName === DEFAULT_FOLDER_NAME) {
+      setUploadedImages(prevImages => [newImage, ...prevImages].slice(0, LATEST_IMAGES_COUNT));
+    }
+    // Regardless, if the user is logged in, refresh the latest images list from server
+    // to ensure data consistency, especially if an older image was pushed out of the top LATEST_IMAGES_COUNT
     if (user) {
-        fetchLatestUserImages();
+      fetchLatestUserImages();
     }
   }, [user, fetchLatestUserImages]);
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
-    if (user) fetchLatestUserImages();
+    if (user) fetchLatestUserImages(); // Re-fetch to ensure consistency
   }, [user, fetchLatestUserImages]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
     setUploadedImages((prevImages) =>
       prevImages.map(image =>
         image.id === oldImageDbId
-          ? { ...image, id: newImageDbId, name: newName, url: newUrl, previewSrc: newUrl }
+          ? { 
+              ...image, 
+              id: newImageDbId, 
+              name: newName, 
+              url: newUrl, // Update clean URL
+              previewSrc: `${newUrl}?t=${Date.now()}` // Update previewSrc with new URL and cache-buster
+            }
           : image
       )
     );
-    if (user) fetchLatestUserImages();
+    if (user) fetchLatestUserImages(); // Re-fetch to ensure consistency
   }, [user, fetchLatestUserImages]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
+
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -250,10 +275,10 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id} // Simplified key
+                    key={image.id}
                     id={image.id}
-                    src={image.previewSrc}
-                    url={image.url}
+                    src={image.previewSrc} // This will be the cache-busted URL for just-uploaded images
+                    url={image.url}         // This is the clean URL
                     name={image.name}
                     uploaderId={image.uploaderId}
                     originalName={image.originalName}
