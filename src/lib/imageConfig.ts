@@ -13,3 +13,4 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
 // The fs.access polling loop in imageActions.ts is a more targeted check for file visibility by Node.js.
 export const POST_UPLOAD_DELAY_MS = 500; // ms
 export const ITEMS_PER_PAGE = 15;
+export const LATEST_IMAGES_COUNT = 8; // Number of latest images to show on the homepage

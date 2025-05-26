@@ -2,7 +2,7 @@
 // src/components/page-content/home-page-client-content.tsx
 "use client";
 
-import React, { useState, useCallback, useEffect, ReactNode, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, ReactNode } from 'react';
 import Image from 'next/image';
 import { ImageUploader } from '@/components/image-uploader';
 import { ImagePreviewCard } from '@/components/image-preview-card';
@@ -15,7 +15,7 @@ import {
     type UserFolder,
     type PaginatedUserImagesResponse
 } from '@/app/actions/imageActions';
-import { DEFAULT_FOLDER_NAME } from '@/lib/imageConfig'; 
+import { DEFAULT_FOLDER_NAME, LATEST_IMAGES_COUNT } from '@/lib/imageConfig'; 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/hooks/use-auth';
@@ -43,8 +43,6 @@ interface DisplayImage {
   originalName: string;
 }
 
-const LATEST_IMAGES_COUNT = 8; // For the homepage display
-
 interface HomePageClientContentProps {
   serverImageContent: ReactNode | null;
 }
@@ -66,7 +64,6 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         const folders = await listUserFolders(user.id);
         const validFolders = folders.length > 0 ? folders : [{ name: DEFAULT_FOLDER_NAME }];
         setUserFolders(validFolders);
-        // Ensure selectedFolder is valid, otherwise default it
         if (!validFolders.some(f => f.name === selectedFolder)) {
             setSelectedFolder(DEFAULT_FOLDER_NAME);
         }
@@ -94,11 +91,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         limit: LATEST_IMAGES_COUNT, 
         targetFolderName: folderToFetch 
       });
+      // img here is UserImageData, which has a pre-constructed 'url' property
       const displayImages: DisplayImage[] = response.images.map(img => ({
         id: img.id,
         name: img.filename || '',
-        previewSrc: `/uploads/${img.urlPath}?t=${Date.now()}`, // Added cache-busting
-        url: `/uploads/${img.urlPath}`,
+        previewSrc: `${img.url}?t=${Date.now()}`, // Use the correct img.url from UserImageData
+        url: img.url, // Use the correct img.url from UserImageData
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '',
@@ -115,9 +113,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
   useEffect(() => {
     if (!authLoading) {
       if (user) {
-        fetchUserFoldersForUpload(); // This will also potentially trigger the next useEffect if selectedFolder changes
+        fetchUserFoldersForUpload();
       } else {
-        // Reset for logged-out state
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
         setSelectedFolder(DEFAULT_FOLDER_NAME);
         setUploadedImages([]);
@@ -126,7 +123,6 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     }
   }, [authLoading, user, fetchUserFoldersForUpload]);
 
-  // This effect runs when selectedFolder changes or user logs in/out
   useEffect(() => {
     if (!authLoading && user) {
         fetchImagesForSelectedFolder(selectedFolder);
@@ -138,8 +134,18 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
-    // The server action `uploadImage` calls `revalidatePath('/')`.
-    // After the upload, re-fetch images for the currently selected folder.
+    if (user && imageFile.folderName === selectedFolder) {
+      const newImage: DisplayImage = {
+        id: imageFile.id,
+        name: imageFile.filename,
+        previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`,
+        url: `/uploads/users/${imageFile.urlPath}`,
+        uploaderId: imageFile.userId,
+        folderName: imageFile.folderName,
+        originalName: imageFile.originalName,
+      };
+      setUploadedImages(prev => [newImage, ...prev.slice(0, LATEST_IMAGES_COUNT - 1)]);
+    }
     if (user) {
       fetchImagesForSelectedFolder(selectedFolder);
     }
@@ -147,11 +153,23 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
-    if (user) fetchImagesForSelectedFolder(selectedFolder);
+    if (user) {
+        setUploadedImages(prevImages => prevImages.filter(img => img.id !== deletedImageDbId));
+        fetchImagesForSelectedFolder(selectedFolder);
+    }
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
-    if (user) fetchImagesForSelectedFolder(selectedFolder); 
+    if (user) {
+      setUploadedImages(prevImages =>
+        prevImages.map(img =>
+          img.id === oldImageDbId
+            ? { ...img, id: newImageDbId, name: newName, previewSrc: `${newUrl}?t=${Date.now()}`, url: newUrl }
+            : img
+        )
+      );
+      fetchImagesForSelectedFolder(selectedFolder);
+    } 
   }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
 
@@ -161,7 +179,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         <div className="container flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-2">
             <Image src="https://placehold.co/40x40.png" alt="ImageDrop Logo" width={32} height={32} className="rounded-md" data-ai-hint="logo abstract" />
-            <h1 className="text-2xl font-bold text-primary">ImageDrop</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-primary">ImageDrop</h1>
           </Link>
           <div className="flex items-center gap-4">
             <ThemeToggle />
@@ -172,18 +190,18 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
       <main className="flex-grow container mx-auto px-4 py-8 sm:px-6 lg:px-8">
         {user && (
-          <section aria-labelledby="upload-title" className="mb-12">
+          <section aria-labelledby="upload-title" className="mb-8 md:mb-12">
             <div className="max-w-3xl mx-auto text-center">
-              <h2 id="upload-title" className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl md:text-5xl">
+              <h2 id="upload-title" className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground md:text-4xl">
                 Upload Your Images
               </h2>
-              <p className="mt-3 text-base text-muted-foreground sm:mt-4 sm:text-lg md:text-xl">
+              <p className="mt-2 sm:mt-3 text-sm sm:text-base text-muted-foreground md:text-lg">
                 Supports JPG, PNG, GIF, WebP. Max size varies by user/site setting.
               </p>
             </div>
 
-            <div className="mt-6 max-w-md mx-auto">
-                <Label htmlFor="upload-folder-select" className="text-sm font-medium text-muted-foreground">Upload to folder:</Label>
+            <div className="mt-4 sm:mt-6 max-w-md mx-auto">
+                <Label htmlFor="upload-folder-select" className="text-xs sm:text-sm font-medium text-muted-foreground">Upload to folder:</Label>
                 <Select value={selectedFolder} onValueChange={setSelectedFolder} disabled={userFolders.length === 0 || authLoading}>
                     <SelectTrigger id="upload-folder-select" className="w-full mt-1">
                         <SelectValue placeholder="Select a folder" />
@@ -205,7 +223,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                   </p>
             </div>
 
-            <div className="mt-4 max-w-2xl mx-auto">
+            <div className="mt-3 sm:mt-4 max-w-2xl mx-auto">
               <ImageUploader onImageUpload={handleImageUpload} currentFolderName={selectedFolder} />
             </div>
           </section>
@@ -234,11 +252,11 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         )}
 
 
-        {!authLoading && user && <Separator className="my-8 md:my-12" />}
+        {!authLoading && user && <Separator className="my-6 md:my-8" />}
 
         {!authLoading && user && (
           <section aria-labelledby="gallery-title">
-            <h2 id="gallery-title" className="text-2xl font-semibold text-foreground mb-6 text-center sm:text-left">
+            <h2 id="gallery-title" className="text-xl sm:text-2xl font-semibold text-foreground mb-4 sm:mb-6 text-center sm:text-left">
               Latest Images in: <span className="text-primary">&quot;{selectedFolder}&quot;</span> (Shows up to {LATEST_IMAGES_COUNT})
             </h2>
             {isLoadingImages ? (
@@ -302,7 +320,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
       </main>
 
       <footer className="py-8 text-center text-muted-foreground border-t mt-8 md:mt-12">
-        <p>&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
+        <p className="text-sm">&copy; {new Date().getFullYear()} ImageDrop. All rights reserved (not really, it&apos;s a demo!).</p>
          <p className="text-xs mt-1">Images stored in `public/uploads/users/userId/folderName/`.</p>
          <p className="text-xs mt-1">User data & image metadata now in PostgreSQL.</p>
       </footer>
