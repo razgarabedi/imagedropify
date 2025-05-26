@@ -11,13 +11,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { uploadImage, type UploadImageActionState, type UploadedImageServerData } from '@/app/actions/imageActions';
-import { useAuth } from '@/hooks/use-auth'; 
+import { useAuth } from '@/hooks/use-auth';
 import Link from 'next/link';
+import { ACCEPTED_IMAGE_TYPES } from '@/lib/imageConfig'; // Import accepted types
 
-// MAX_FILE_SIZE is now effectively controlled by server actions based on user/global settings
-// const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']; // Already in imageConfig
-
-// The onImageUpload callback should now expect data matching UploadedImageServerData
 interface ImageUploaderProps {
   onImageUpload: (imageData: UploadedImageServerData) => void;
   currentFolderName?: string | null;
@@ -26,7 +23,7 @@ interface ImageUploaderProps {
 const initialUploadState: UploadImageActionState = { success: false };
 
 export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploaderProps) {
-  const { user, loading: authLoading } = useAuth(); 
+  const { user, loading: authLoading } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [localPreviewSrc, setLocalPreviewSrc] = useState<string | null>(null);
@@ -51,7 +48,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
         title: 'Image Uploaded!',
         description: `${actionState.data.originalName} to folder "${actionState.data.folderName}".`,
       });
-      onImageUpload(actionState.data); // Pass the full data object
+      onImageUpload(actionState.data);
       resetUploaderVisualState();
     } else if (!isPending && actionState.error) {
       toast({
@@ -59,29 +56,34 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
         title: 'Upload Failed',
         description: actionState.error,
       });
-      setUploadProgress(0); 
+      setUploadProgress(0);
     }
   }, [actionState, isPending, onImageUpload, toast, resetUploaderVisualState]);
 
 
   const handleFileSelected = useCallback((file: File | null) => {
     if (!file) return;
-    if (isPending) return; 
+    if (isPending) return;
 
-    if (!user) { 
+    if (!user) {
       toast({ variant: 'destructive', title: 'Authentication Required', description: 'Please login to upload images.' });
       resetUploaderVisualState();
       return;
     }
-    // Accepted types check already in server action, can be kept here as a pre-check
-    // if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-    //   toast({ variant: 'destructive', title: 'Invalid File Type', description: `Accepted: JPG, PNG, GIF, WebP. You tried: ${file.type}` });
-    //   resetUploaderVisualState();
-    //   return;
-    // }
+
+    // Client-side file type validation
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid File Type',
+        description: `Accepted types: JPG, PNG, GIF, WebP. You provided: ${file.type || 'unknown'}`
+      });
+      resetUploaderVisualState();
+      return;
+    }
 
     setLocalFileName(file.name);
-    setUploadProgress(0); // Simulating progress start, actual progress not implemented
+    setUploadProgress(5); // Simulate progress start
 
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -91,6 +93,8 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       if (currentFolderName) {
         formData.append('folderName', currentFolderName);
       }
+      // Simulate progress a bit more for UX before actual server action
+      setUploadProgress(30); 
       startTransition(() => {
         formAction(formData);
       });
@@ -133,7 +137,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
     if (isPending || !user || authLoading) return;
     fileInputRef.current?.click();
   };
-  
+
   useEffect(() => {
     const currentPreview = localPreviewSrc;
     return () => { if (currentPreview && currentPreview.startsWith('blob:')) URL.revokeObjectURL(currentPreview); };
@@ -148,7 +152,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       </Card>
     );
   }
-  if (!user) { 
+  if (!user) {
     return (
       <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
         <CardHeader><CardTitle className="text-center text-xl">Login to Upload</CardTitle><CardDescription className="text-center">Please login to upload and manage your images.</CardDescription></CardHeader>
@@ -161,7 +165,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
       </Card>
     )
   }
-  
+
   return (
     <Card className="shadow-xl hover:shadow-2xl transition-shadow duration-300">
       <CardHeader><CardTitle className="text-center text-xl">Upload Image{currentFolderName && ` to "${currentFolderName}"`}</CardTitle><CardDescription className="text-center">Drag & drop or click to select a file.</CardDescription></CardHeader>
@@ -175,12 +179,12 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
           role="button" aria-label="Image upload area" tabIndex={isPending ? -1 : 0}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if(!isPending) triggerFileInput(); }}}
         >
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" disabled={isPending} name="image" /> {/* Removed accept prop, server validates */}
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" disabled={isPending} name="image" accept={ACCEPTED_IMAGE_TYPES.join(',')} />
           {isPending ? (
             <div className="flex flex-col items-center text-center w-full">
               <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
               <p className="text-lg font-medium text-foreground">Uploading {localFileName && `"${localFileName}"`}</p>
-              <Progress value={uploadProgress} className="w-full mt-2 h-2" /> 
+              <Progress value={uploadProgress} className="w-full mt-2 h-2" />
               <p className="text-sm text-muted-foreground mt-1">{uploadProgress > 0 ? `${uploadProgress}%` : 'Processing...'}</p>
             </div>
           ) : localPreviewSrc ? (
@@ -193,7 +197,7 @@ export function ImageUploader({ onImageUpload, currentFolderName }: ImageUploade
             <div className="flex flex-col items-center text-center pointer-events-none">
               <UploadCloud className="h-12 w-12 text-primary mb-4" />
               <p className="text-lg font-semibold text-foreground">Drop image here or click to browse</p>
-              <p className="text-sm text-muted-foreground">Supports JPG, PNG, GIF, WebP. Max size varies by user/site setting.</p>
+              <p className="text-sm text-muted-foreground">Supports JPG, PNG, GIF, WebP. Max size varies.</p>
             </div>
           )}
         </div>
