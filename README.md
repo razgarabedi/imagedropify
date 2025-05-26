@@ -7,9 +7,9 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
 
 ## Core Features
 
-*   **Image Uploading:** Users can upload images (JPG, PNG, GIF, WebP) to specific folders or a default "Uploads" folder.
+*   **Image Uploading:** Users can upload images (JPG, PNG, GIF, WebP) to specific folders or a default "Uploads" folder. Image metadata is stored in PostgreSQL.
 *   **Folder Management:** Logged-in users can create folders to organize their images.
-*   **Image Management:** Users can view, rename, and delete their own uploaded images. Image metadata is stored in PostgreSQL.
+*   **Image Management:** Users can view, rename, and delete their own uploaded images.
 *   **Folder Sharing:** Users can generate unique, shareable public links for their custom folders. Share metadata is stored in PostgreSQL.
 *   **Database-backed Authentication (PostgreSQL + Prisma):**
     *   User accounts are managed in a PostgreSQL database.
@@ -17,15 +17,15 @@ ImageDrop is a Next.js application designed for easy image uploading, folder org
     *   Sessions are managed using JWTs stored in HTTP-only cookies.
 *   **User Approval Workflow:**
     1.  **First User is Admin:** The very first user account created in the database will be an administrator and automatically approved.
-    2.  **Subsequent Signups:** All users signing up after the first admin will have their status set to `pending`.
-    3.  **Pending Status:** Users with a `pending` status cannot log in until approved.
+    2.  **Subsequent Signups:** All users signing up after the first admin will have their status set to `Pending`.
+    3.  **Pending Status:** Users with a `Pending` status cannot log in until approved.
     4.  **Admin Approval:** An administrator must approve or reject pending accounts via the Admin Dashboard.
 *   **Administrator Dashboard (`/admin/dashboard`):**
     *   **User Management:**
         *   View all users, their status, role, image count, and storage usage.
         *   Approve pending user registrations.
         *   Reject (ban) users.
-        *   Unban users (sets status back to `pending` for re-approval).
+        *   Unban users (sets status back to `Pending` for re-approval).
         *   Delete users (this also deletes their uploaded images from the filesystem and image metadata from the database).
     *   **User-Specific Limits:**
         *   Set maximum number of images a user can upload.
@@ -359,7 +359,7 @@ sudo chmod o+x /var/www     # Common, usually okay
 **CRITICAL: Run PM2 commands as the `node_user` you designated for file ownership. DO NOT run `pm2 start` as `root`.**
 If `pm2 list` (run as `node_user`) does not show your app, or if `sudo pm2 list` shows it running as `root`, you have started PM2 incorrectly.
 
-**If new files in `public/uploads/users/` are owned by `root:root` (check with `ls -l`), it means your PM2 process IS RUNNING AS `root`. This is incorrect and a security risk.**
+**WARNING:** If newly created files in `public/uploads/users/` are owned by `root:root` (check with `ls -l`), it means your PM2 process **IS RUNNING AS `root`**. This is a security risk and the primary cause of permission issues for the web server.
 To fix this:
 1.  Stop and delete the PM2 process started as root: `sudo pm2 stop imagedrop && sudo pm2 delete imagedrop && sudo pm2 save`
 2.  Switch to your `node_user`: `su - node_user`
@@ -428,16 +428,17 @@ server {
         proxy_send_timeout 600s;
     }
 
+    # Serve uploaded static images directly
     location /uploads/ {
-        alias /var/www/imagedrop/public/uploads/; # Ensure this path is correct!
+        alias /var/www/imagedrop/public/uploads/; # CRITICAL: Ensure this path is correct!
         autoindex off;
         access_log off; # Reduce log noise for static assets
 
-        # Aggressive cache-busting for newly uploaded files
+        # Cache-busting for newly uploaded files (helps with immediate visibility)
         expires -1; # Equivalent to Cache-Control: no-cache
         add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0";
 
-        # Try to disable Nginx's own file caching mechanisms for this location
+        # Attempt to disable Nginx's own file caching mechanisms for this location
         open_file_cache off;
         sendfile off; 
 
@@ -446,17 +447,19 @@ server {
             try_files $uri $uri/ =404; # Serve the image or return 404 if not found
         }
         # Deny access to any other file types or directory listings in /uploads/
-        location ~ ^/uploads/(.*)$ { # Match any file/path within /uploads/
+        # This will match any file/path within /uploads/ that didn't match the image extension regex above.
+        location ~ ^/uploads/(.*)$ { 
              deny all;
              return 403; # Or 404 if you prefer to hide existence
         }
         add_header X-Content-Type-Options "nosniff"; # Security header
     }
 
+    # Serve Next.js static assets (hashed, so can be cached aggressively)
     location /_next/static/ {
-        proxy_cache_bypass $http_upgrade;
+        proxy_cache_bypass $http_upgrade; # Still useful for dev or specific cases
         proxy_pass http://localhost:3000/_next/static/;
-        expires max; # Next.js static assets are hashed, so cache aggressively
+        expires max; 
         add_header Cache-Control "public";
     }
 
@@ -540,9 +543,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 
 *   **Allow Nginx to connect to network (for proxying to Next.js on port 3000):**
     This is critical if Nginx is blocked from connecting to `localhost:3000`.
-    ```bash
-    sudo setsebool -P httpd_can_network_connect 1
-    ```
+    Run: `sudo setsebool -P httpd_can_network_connect 1`
 *   **Set correct SELinux context for web content (if needed):**
     If Nginx has trouble accessing files in `/var/www/imagedrop` even with correct file permissions, you might need to set the SELinux context:
     ```bash
@@ -574,7 +575,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 *   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own all application files and `public/uploads`.
 *   **File Permissions**: Critical for `public/uploads`. `node_user` needs write, Nginx user (`www-data` or `nginx`) needs read/execute. **Default ACLs (`setfacl -dR`) are vital.**
-*   **Nginx Configuration**: Review `/uploads/` location block for security (deny non-image files) and caching.
+*   **Nginx Configuration**: Review `/uploads/` location block for security (deny non-image files) and caching. Check order of location blocks if specific `/uploads/` isn't matching.
 *   **Input Validation**: Server actions use Zod (already in place).
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
@@ -588,11 +589,11 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     *   Ensure PostgreSQL is running and accessible (firewall, `pg_hba.conf`).
     *   On CentOS, check SELinux logs (`ausearch -m avc -ts recent`) if Node.js can't connect to DB, or if Nginx can't connect to Node.js app on port 3000 (`httpd_can_network_connect`).
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
-    *   Indicates Nginx is NOT serving the static image from `/uploads/`. Request is proxied to Next.js, which returns HTML (likely 404).
+    *   Indicates Nginx is NOT serving the static image from `/uploads/`. The request is being proxied to Next.js, which returns HTML (likely a 404).
     *   **Primary Causes & Solutions:**
         1.  **PM2 Process Running as `root`**: If `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect and the most likely cause if file permissions seem to reset or be wrong for Nginx. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8).** Correct the PM2 setup and then fix ownership of existing `public/uploads` (see Step 7).
         2.  **Ownership/Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
-            *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
+            *   **CRITICAL DIAGNOSTIC**: Immediately after an upload fails for `next/image` (when the PM2 logs show the "received text/html" error, and before restarting PM2): SSH into your server.
                 Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for the Nginx user (replace `www-data` with `nginx` if on CentOS):
                 ```bash
@@ -605,11 +606,11 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
-        3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`).
-        4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server.
+        3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`). Ensure there are no typos in your `alias` path. Verify that a more general `location /` block isn't accidentally catching `/uploads/` requests before your specific `location /uploads/` block.
+        4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server to the *target* directory, e.g., `alias /var/www/imagedrop/public/uploads/;`.
         5.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in `/uploads/` block are correctly set and Nginx reloaded.
-        6.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files. Check `ausearch -m avc -ts recent`. The `httpd_sys_content_t` context might be needed for `/var/www/imagedrop`.
-    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`.
+        6.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files (`httpd_sys_content_t`) or making network connections to the Next.js app (`httpd_can_network_connect`). Check `ausearch -m avc -ts recent`.
+    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`. These logs are vital for seeing how Nginx handles the `/uploads/...` requests.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit` in `next.config.ts`.
     *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`).
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify it can connect to the database. SELinux might also block Nginx proxying to port 3000 (see Step 12, ensure `httpd_can_network_connect` is `on`).
@@ -671,7 +672,7 @@ Enable necessary Apache modules:
 sudo a2enmod proxy proxy_http headers rewrite ssl expires proxy_wstunnel # Ubuntu (added proxy_wstunnel for websockets if needed)
 # For CentOS, modules like proxy and proxy_http are often loaded by default.
 # You might need to check /etc/httpd/conf.modules.d/ for loaded modules.
-# `sudo apachectl -M` can list loaded modules.
+# `sudo apachectl -M` or `sudo httpd -M` can list loaded modules.
 sudo systemctl restart apache2 # Ubuntu
 # sudo systemctl enable httpd && sudo systemctl start httpd # CentOS
 # sudo systemctl restart httpd # CentOS
@@ -710,6 +711,7 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
     </Proxy>
 
     # Serve static uploads directly
+    # CRITICAL: Ensure this path is correct and accessible by Apache user!
     Alias /uploads/ /var/www/imagedrop/public/uploads/
     <Directory /var/www/imagedrop/public/uploads/>
         Options FollowSymLinks
@@ -769,7 +771,7 @@ sudo apache2ctl configtest # Ubuntu
     ```bash
     sudo firewall-cmd --permanent --add-service=ssh
     sudo firewall-cmd --permanent --add-service=http
-    # sudo firewall-cmd --permanent --add-service=https
+    # sudo firewall-cmd --permanent --add-service=https # If using SSL
     sudo firewall-cmd --reload
     sudo firewall-cmd --list-all
     ```
@@ -788,7 +790,7 @@ AppArmor is a security module on Ubuntu. Default Apache/Nginx profiles usually d
     sudo dmesg | grep -i apparmor
     sudo grep -i apparmor /var/log/syslog
     ```
-    If you see denials related to Apache (`usr.sbin.apache2`) or Nginx (`usr.sbin.nginx`) accessing files in `/var/www/imagedrop/public/uploads/` or connecting to `localhost:3000`, you may need to adjust the AppArmor profile for your web server. Modifying AppArmor profiles is an advanced topic; consult the Ubuntu AppArmor documentation. For most standard setups, this step is usually not needed.
+    If you see denials related to Apache (`usr.sbin.apache2`) accessing files in `/var/www/imagedrop/public/uploads/` or connecting to `localhost:3000`, you may need to adjust the AppArmor profile for your web server. Modifying AppArmor profiles is an advanced topic; consult the Ubuntu AppArmor documentation. For most standard setups, this step is usually not needed.
 
 ### 11. (Optional) Secure Apache with SSL using Certbot
 
@@ -815,9 +817,7 @@ sudo certbot renew --dry-run # Test renewal
 If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'll need to ensure Apache can proxy and access files.
 
 *   **Allow Apache to connect to network (for proxying to Next.js on port 3000):**
-    ```bash
-    sudo setsebool -P httpd_can_network_connect 1
-    ```
+    Run: `sudo setsebool -P httpd_can_network_connect 1`
 *   **Set correct SELinux context for web content (if Apache has issues reading files):**
     ```bash
     sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/imagedrop(/.*)?"
@@ -842,7 +842,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
 *   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own application files and `public/uploads`.
 *   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7, adapting for Apache user).
-*   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security.
+*   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security. Check order of directives if `Alias` isn't matching.
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
 *   **SELinux (CentOS)**: Configure if enabled, especially `httpd_can_network_connect`.
@@ -851,11 +851,11 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
 
 *   **Login Fails / Database Issues:** Verify `DATABASE_URL`. Check `pm2 logs imagedrop` (as `node_user`). Ensure PostgreSQL is running and accessible. Check SELinux.
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
-    *   Indicates Apache is NOT serving the static image from `/uploads/`. Request is proxied to Next.js.
+    *   Indicates Apache is NOT serving the static image from `/uploads/`. The request is being proxied to Next.js.
     *   **Primary Causes & Solutions (Similar to Nginx):**
         1.  **PM2 Process Running as `root`**: If `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect and the most likely cause if file permissions seem to reset or be wrong for Apache. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8 of Nginx section).** Correct the PM2 setup and then fix ownership of existing `public/uploads`.
         2.  **Ownership/Permissions for Apache User (`www-data` or `apache`)**: Must have read (`r`) on image, execute (`x`) on parent dirs.
-            *   **CRITICAL DIAGNOSTIC**: Immediately after a failed upload (when the thumbnail doesn't appear), SSH into your server.
+            *   **CRITICAL DIAGNOSTIC**: Immediately after an upload fails for `next/image` (when the PM2 logs show the "received text/html" error, and before restarting PM2): SSH into your server.
                 Identify the exact path of the newly uploaded image, e.g., `/var/www/imagedrop/public/uploads/users/<userId>/<folderName>/<image.png>`.
                 Check effective permissions for the Apache user (replace `www-data` with `apache` if on CentOS):
                 ```bash
@@ -868,13 +868,13 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:apache`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `apache`) for parent directories is key for new files/folders created by `node_user`.**
-        3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache.
-        4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**.
+        3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache. Ensure `mod_alias` is enabled (`sudo a2enmod alias` on Ubuntu, then restart Apache).
+        4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**. The `Alias` path `/uploads/` should map to the correct filesystem path `/var/www/imagedrop/public/uploads/`.
         5.  **Apache Caching**: Ensure cache-busting headers are set.
         6.  **SELinux (CentOS)**: Check `ausearch -m avc -ts recent`. Ensure `httpd_sys_content_t` is on relevant directories and `httpd_can_network_connect` is `on`.
-    *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` (Ubuntu) or `/var/log/httpd/imagedrop_error_log` (CentOS).
+    *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` (Ubuntu) or `/var/log/httpd/imagedrop_error_log` (CentOS). These logs are vital.
     *   **Body Size Limits:** Check Apache `LimitRequestBody` vs. Next.js `bodySizeLimit`.
-    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`).
+    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`). These logs will show if the internal diagnostic HEAD request to `http://localhost:3000/uploads/...` is getting a 404 from Apache.
 *   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify database connectivity. SELinux might block Apache proxying (check `httpd_can_network_connect`).
 
 ### 15. Updating the Application (Apache)
@@ -953,3 +953,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
     *   The next user to sign up will become the admin. Default site settings will be applied by the application if the `SiteSetting` table is empty (the application logic handles seeding this).
 
 Your ImageDrop application should now be running with your chosen web server and a fresh PostgreSQL database!
+Images stored in `public/uploads/users/userId/folderName/filename.ext`.
+User data & image metadata in PostgreSQL.
+
+```

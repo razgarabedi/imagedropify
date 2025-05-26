@@ -9,5 +9,6 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
-// Increased for diagnostic purposes. If this helps, it points to a severe timing issue on the server.
-export const POST_UPLOAD_DELAY_MS = 3000; // Increased to 3000ms (3 seconds)
+// Reduced delay as long delays were not solving the root web server issue.
+// The fs.access polling loop in imageActions.ts is a more targeted check for file visibility by Node.js.
+export const POST_UPLOAD_DELAY_MS = 500;
