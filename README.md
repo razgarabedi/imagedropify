@@ -258,10 +258,15 @@ JWT_SECRET_KEY="your-super-secret-and-long-jwt-key-please-change-me"
 # PostgreSQL Database Connection URL - REQUIRED
 # Replace with your actual PostgreSQL connection string as configured in the Database Setup section.
 DATABASE_URL="postgresql://imagedrop_user:your_secure_password@localhost:5432/imagedrop?schema=public"
+
+# Port for the Next.js application (PM2 will run it on this port)
+# Default is 3000 if not set. Nginx will proxy to this port.
+# PORT=3000
 ```
 **CRITICAL:**
 *   The `JWT_SECRET_KEY` is vital for securing user sessions. Generate a long, random, unique string.
 *   The `DATABASE_URL` must point to your configured PostgreSQL database. Ensure the user and password match what you created.
+*   The `PORT` variable (if set) must match the port Nginx proxies to (e.g., `http://localhost:3000`).
 
 ### 5. Build the Application & Run Database Migrations
 
@@ -314,7 +319,7 @@ sudo chmod 750 /var/www/imagedrop # Owner: rwx, Group: rx, Others: ---
 # Ensure the base 'public/uploads/users' structure exists
 sudo mkdir -p public/uploads/users
 # Node user owns the uploads structure
-sudo chown -R node_user:node_user public/uploads 
+sudo chown -R node_user:node_user public/uploads
 
 # **Recommended Method: Using ACLs (Access Control Lists)**
 # Install ACLs if not present:
@@ -335,7 +340,7 @@ sudo setfacl -dR -m u:www-data:rx public/uploads # Replace www-data with nginx i
 # These might already be permissive enough on standard setups.
 sudo chmod o+x /var         # Common, usually okay
 sudo chmod o+x /var/www     # Common, usually okay
-# For /var/www/imagedrop and /var/www/imagedrop/public, ensure group or other 'x' is set, 
+# For /var/www/imagedrop and /var/www/imagedrop/public, ensure group or other 'x' is set,
 # or that www-data/nginx is in node_user's group (if not using ACLs for this level).
 # With ACLs, the specific setfacl for www-data:rx on public/uploads handles deeper traversal for Nginx.
 # If not using ACLs extensively for the project root:
@@ -367,7 +372,7 @@ To fix this:
 
 ```bash
 # First, ensure you are the node_user
-# su - node_user 
+# su - node_user
 # (Or ensure your current shell session is as node_user)
 
 cd /var/www/imagedrop
@@ -386,7 +391,7 @@ pm2 save # Save current process list AS NODE_USER
 pm2 list
 pm2 logs imagedrop
 ```
-The app will run on `http://localhost:3000` by default.
+The app will run on `http://localhost:3000` by default (or the port set in `PORT` env var).
 
 ### 9. Install and Configure Nginx
 
@@ -402,7 +407,7 @@ sudo nano /etc/nginx/sites-available/imagedrop # Ubuntu
 # sudo nano /etc/nginx/conf.d/imagedrop.conf # CentOS (example, create if not exist)
 ```
 
-Paste the following, replacing `your_domain.com`. Ensure `client_max_body_size` matches or exceeds the Next.js `bodySizeLimit` (currently '10mb').
+Paste the following, replacing `your_domain.com` and `http://localhost:3000` if your Next.js app runs on a different port. Ensure `client_max_body_size` matches or exceeds the Next.js `bodySizeLimit` (currently '10mb').
 
 ```nginx
 server {
@@ -410,12 +415,51 @@ server {
     server_name your_domain.com www.your_domain.com; # Or server_IP_address
 
     access_log /var/log/nginx/imagedrop.access.log;
-    error_log /var/log/nginx/imagedrop.error.log;
+    error_log /var/log/nginx/imagedrop.error_log;
 
     client_max_body_size 10M; # Must be >= Next.js app bodySizeLimit.
 
+    # Serve Next.js static assets (hashed, so can be cached aggressively)
+    location /_next/static/ {
+        proxy_cache_bypass $http_upgrade;
+        proxy_pass http://localhost:3000/_next/static/; # Adjust port if your Next.js app runs elsewhere
+        expires max;
+        add_header Cache-Control "public";
+    }
+
+    # Serve uploaded static images directly
+    # This regex location specifically targets image files within any subdirectory of /uploads/
+    location ~ ^/uploads/.*\.(jpg|jpeg|png|gif|webp)$ {
+        # 'root' specifies the directory from which files will be served.
+        # For a request like /uploads/users/userid/image.jpg, Nginx combines root + $uri.
+        # So, root should point to the directory *containing* the 'uploads' folder.
+        root /var/www/imagedrop/public; # Nginx will look for $document_root$uri
+                                        # e.g., /var/www/imagedrop/public/uploads/users/userid/image.jpg
+                                        # Ensure this path correctly points to your project's public directory.
+
+        try_files $uri =404; # If the file exists at $document_root$uri, serve it.
+                             # Otherwise, Nginx itself returns a 404. This is crucial to prevent
+                             # fall-through to the Next.js proxy for missing images in /uploads/.
+
+        access_log off; # Reduce log noise for these static assets
+        expires -1; # Equivalent to Cache-Control: no-cache for newly uploaded files
+        add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0";
+        open_file_cache off; # Attempt to disable Nginx's own file caching
+        sendfile off; # Can help with serving very recently modified files
+        add_header X-Content-Type-Options "nosniff"; # Security header
+    }
+
+    # Deny access to any other paths or non-image files attempted to be accessed within /uploads/
+    # This location block will be matched if the more specific image regex above does not.
+    # e.g., requests for /uploads/some_folder/ or /uploads/file.txt
+    location /uploads/ {
+        deny all;
+        return 403; # Or 404 if you prefer to hide existence
+    }
+
+    # Main proxy to Next.js app for all other requests (including /_next/image for optimization)
     location / {
-        proxy_pass http://localhost:3000; # Or your Next.js app port
+        proxy_pass http://localhost:3000; # Adjust port if your Next.js app runs elsewhere
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -426,41 +470,6 @@ server {
         proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
-    }
-
-    # Serve uploaded static images directly
-    location /uploads/ {
-        alias /var/www/imagedrop/public/uploads/; # CRITICAL: Ensure this path is correct!
-        autoindex off;
-        access_log off; # Reduce log noise for static assets
-
-        # Cache-busting for newly uploaded files (helps with immediate visibility)
-        expires -1; # Equivalent to Cache-Control: no-cache
-        add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0";
-
-        # Attempt to disable Nginx's own file caching mechanisms for this location
-        open_file_cache off;
-        sendfile off; 
-
-        # Only allow specific image types and deny others
-        location ~* \.(jpg|jpeg|png|gif|webp)$ {
-            try_files $uri $uri/ =404; # Serve the image or return 404 if not found
-        }
-        # Deny access to any other file types or directory listings in /uploads/
-        # This will match any file/path within /uploads/ that didn't match the image extension regex above.
-        location ~ ^/uploads/(.*)$ { 
-             deny all;
-             return 403; # Or 404 if you prefer to hide existence
-        }
-        add_header X-Content-Type-Options "nosniff"; # Security header
-    }
-
-    # Serve Next.js static assets (hashed, so can be cached aggressively)
-    location /_next/static/ {
-        proxy_cache_bypass $http_upgrade; # Still useful for dev or specific cases
-        proxy_pass http://localhost:3000/_next/static/;
-        expires max; 
-        add_header Cache-Control "public";
     }
 
     # Optional: SSL with Certbot (see Step 11)
@@ -547,13 +556,18 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 *   **Set correct SELinux context for web content (if needed):**
     If Nginx has trouble accessing files in `/var/www/imagedrop` even with correct file permissions, you might need to set the SELinux context:
     ```bash
+    # For general web content readable by Nginx
     sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/imagedrop(/.*)?"
     sudo restorecon -Rv /var/www/imagedrop
-    ```
-    For `public/uploads` if Nginx also needs to write (though usually it only reads, Node.js writes):
-    ```bash
-    sudo semanage fcontext -a -t httpd_sys_rw_content_t "/var/www/imagedrop/public/uploads(/.*)?"
-    sudo restorecon -Rv /var/www/imagedrop/public/uploads
+
+    # Specifically for `public/uploads` if Nginx needs to read files written by another process (your Node app)
+    # httpd_sys_rw_content_t might be needed if Nginx itself were to write, but for reading, httpd_sys_content_t
+    # combined with correct file permissions should be okay.
+    # However, if files are created by a different context (your Node app), ensuring httpd_t can read them is key.
+    # Often, setting the correct file permissions (via chown/chmod and ACLs) is enough.
+    # If SELinux still blocks, you might need a more specific policy or to adjust contexts
+    # of the files created by the Node.js process. For now, focus on httpd_can_network_connect
+    # and standard file permissions/ACLs.
     ```
     **Note:** `semanage` might require `policycoreutils-python-utils` or `policycoreutils-python` package.
     ```bash
@@ -563,10 +577,10 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     If issues persist, check the SELinux audit log for denials:
     ```bash
     sudo ausearch -m avc -ts recent
-    # or
+    # or for a summary of what might be needed:
     # sudo cat /var/log/audit/audit.log | audit2allow -m local_nginx_policy
     ```
-    This can help identify specific permissions Nginx is being denied by SELinux. For example, if you see `denied { name_connect } for ... dest=3000`, it means Nginx is blocked from connecting to port 3000. `sudo setsebool -P httpd_can_network_connect 1` should fix this.
+    This can help identify specific permissions Nginx is being denied by SELinux. For example, if you see `denied { name_connect } for ... dest=3000`, it means Nginx is blocked from connecting to port 3000. `sudo setsebool -P httpd_can_network_connect 1` should fix this. If you see `denied { read } on file ...`, it's a file access issue that might need `restorecon` or context adjustments if basic permissions and ACLs are correct.
 
 ### 13. Security Considerations Summary (Nginx)
 
@@ -575,7 +589,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 *   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own all application files and `public/uploads`.
 *   **File Permissions**: Critical for `public/uploads`. `node_user` needs write, Nginx user (`www-data` or `nginx`) needs read/execute. **Default ACLs (`setfacl -dR`) are vital.**
-*   **Nginx Configuration**: Review `/uploads/` location block for security (deny non-image files) and caching. Check order of location blocks if specific `/uploads/` isn't matching.
+*   **Nginx Configuration**: Review `/uploads/` location blocks for security (deny non-image files) and caching. Ensure the `root` or `alias` path is correct and `try_files` is used to prevent fall-through to Next.js for static assets.
 *   **Input Validation**: Server actions use Zod (already in place).
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
@@ -589,7 +603,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
     *   Ensure PostgreSQL is running and accessible (firewall, `pg_hba.conf`).
     *   On CentOS, check SELinux logs (`ausearch -m avc -ts recent`) if Node.js can't connect to DB, or if Nginx can't connect to Node.js app on port 3000 (`httpd_can_network_connect`).
 *   **Upload Fails / Images Not Displaying (Error: "The requested resource isn't a valid image ... received text/html")**:
-    *   Indicates Nginx is NOT serving the static image from `/uploads/`. The request is being proxied to Next.js, which returns HTML (likely a 404).
+    *   Indicates Nginx is NOT serving the static image from `/uploads/`. The request is being proxied to Next.js, which returns HTML (likely a 404 or error page because Next.js doesn't handle `/uploads/...` paths directly).
     *   **Primary Causes & Solutions:**
         1.  **PM2 Process Running as `root`**: If `ls -l` shows new files in `public/uploads/users/...` are owned by `root:root`, it means your PM2 process is running as `root`. This is incorrect and the most likely cause if file permissions seem to reset or be wrong for Nginx. **You MUST ensure PM2 is started and managed by your designated non-root `node_user` (see Step 8).** Correct the PM2 setup and then fix ownership of existing `public/uploads` (see Step 7).
         2.  **Ownership/Permissions for Nginx User (`www-data` or `nginx`)**: Nginx user must have read (`r`) on the image and execute (`x`) on ALL parent directories up to and including the image's directory.
@@ -606,13 +620,13 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:nginx`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `nginx`) for parent directories is key for new files/folders created by `node_user`.**
-        3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`). Ensure there are no typos in your `alias` path. Verify that a more general `location /` block isn't accidentally catching `/uploads/` requests before your specific `location /uploads/` block.
-        4.  **Incorrect Nginx `alias` Path** in the `/uploads/` location block. It must be the absolute path on the server to the *target* directory, e.g., `alias /var/www/imagedrop/public/uploads/;`.
-        5.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in `/uploads/` block are correctly set and Nginx reloaded.
+        3.  **Nginx Configuration Not Loaded/Correct**: Run `sudo nginx -t` and `sudo systemctl reload nginx` (or `restart`). Ensure there are no typos in your `root` or `alias` path in the image serving location block. Verify that the specific image location block (e.g., `location ~ ^/uploads/.*\.(jpg|jpeg|png|gif|webp)$`) is correctly defined and ordered, and that its `try_files $uri =404;` directive is preventing requests from falling through to the main Next.js proxy.
+        4.  **Incorrect Nginx `root` or `alias` Path** in the image serving location block.
+        5.  **Nginx Caching Directives**: Ensure `open_file_cache off; sendfile off;` and `Cache-Control` headers in the image serving block are correctly set and Nginx reloaded.
         6.  **SELinux (CentOS)**: If enabled, ensure it's not blocking Nginx from accessing the files (`httpd_sys_content_t`) or making network connections to the Next.js app (`httpd_can_network_connect`). Check `ausearch -m avc -ts recent`.
-    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`. These logs are vital for seeing how Nginx handles the `/uploads/...` requests.
+    *   **Check Nginx Logs**: `tail -f /var/log/nginx/imagedrop.error.log` and `access.log`. These logs are vital for seeing how Nginx handles the `/uploads/...` requests. Specifically, see if a 404 is logged by Nginx itself for the image URL, or if the request is logged as being passed to the `localhost:3000` upstream.
     *   **Body Size Limits:** Check Nginx `client_max_body_size` vs. Next.js `bodySizeLimit` in `next.config.ts`.
-    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`).
+    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`). These logs will show the "The requested resource isn't a valid image..." error if the internal diagnostic HEAD request (or `next/image`'s fetch) gets HTML back.
 *   **502 Bad Gateway:** Node.js app (PM2) might be crashed or unresponsive. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify it can connect to the database. SELinux might also block Nginx proxying to port 3000 (see Step 12, ensure `httpd_can_network_connect` is `on`).
 
 ### 15. Updating the Application (Nginx)
@@ -630,7 +644,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), you might need to allow
 
 ## Deployment on Ubuntu/CentOS with Apache & PM2
 
-This guide outlines deploying ImageDrop on a Linux server using Apache as a reverse proxy and PM2 as a process manager. 
+This guide outlines deploying ImageDrop on a Linux server using Apache as a reverse proxy and PM2 as a process manager.
 **Prerequisites (Steps 1 & 2.a from Nginx section):** Ensure Node.js, npm, PM2 are installed.
 **Create Deployment User (Step 2.b from Nginx section):** Create `node_user`.
 **Database Setup:** Ensure PostgreSQL is set up as described in the "Database Setup" section and `DATABASE_URL` is configured in `.env.local`.
@@ -686,7 +700,7 @@ sudo nano /etc/apache2/sites-available/imagedrop.conf
 # sudo nano /etc/httpd/conf.d/imagedrop.conf
 ```
 
-Paste the following, replacing `your_domain.com`. `LimitRequestBody` should match or exceed Next.js `bodySizeLimit` (currently '10mb').
+Paste the following, replacing `your_domain.com` and `http://localhost:3000` if your Next.js app runs on a different port. `LimitRequestBody` should match or exceed Next.js `bodySizeLimit` (currently '10mb').
 
 ```apache
 <VirtualHost *:80>
@@ -733,15 +747,15 @@ Paste the following, replacing `your_domain.com`. `LimitRequestBody` should matc
     </Directory>
 
     # Proxy Next.js static assets (can be cached aggressively)
-    ProxyPass /_next/static/ http://localhost:3000/_next/static/
-    ProxyPassReverse /_next/static/ http://localhost:3000/_next/static/
+    ProxyPass /_next/static/ http://localhost:3000/_next/static/ # Adjust port if needed
+    ProxyPassReverse /_next/static/ http://localhost:3000/_next/static/ # Adjust port if needed
     <Location /_next/static/>
         Header set Cache-Control "public, max-age=31536000, immutable"
     </Location>
 
     # Proxy all other requests to the Next.js app
-    ProxyPass / http://localhost:3000/
-    ProxyPassReverse / http://localhost:3000/
+    ProxyPass / http://localhost:3000/ # Adjust port if needed
+    ProxyPassReverse / http://localhost:3000/ # Adjust port if needed
 </VirtualHost>
 ```
 
@@ -820,13 +834,14 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
     Run: `sudo setsebool -P httpd_can_network_connect 1`
 *   **Set correct SELinux context for web content (if Apache has issues reading files):**
     ```bash
+    # For general web content readable by Apache
     sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/imagedrop(/.*)?"
     sudo restorecon -Rv /var/www/imagedrop
-    ```
-    For `public/uploads` if Apache needed write (unlikely, Node.js writes):
-    ```bash
-    sudo semanage fcontext -a -t httpd_sys_rw_content_t "/var/www/imagedrop/public/uploads(/.*)?"
-    sudo restorecon -Rv /var/www/imagedrop/public/uploads
+    # Specifically for public/uploads if files are created by another context (Node.js app)
+    # and Apache (httpd_t) needs to read them.
+    # Ensuring httpd_sys_content_t or a similar readable context on the files is key.
+    # If file permissions and ACLs are correct, this might not always be needed,
+    # but 'restorecon' can help if contexts are mismatched.
     ```
     Install `policycoreutils-python-utils` if `semanage` is not found.
 *   **Check Audit Log for Denials:**
@@ -842,7 +857,7 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
 *   **PM2 User**: Run PM2 as a non-root `node_user`. **Verify new files in `public/uploads` are NOT owned by `root:root`.**
 *   **File Ownership**: `node_user` should own application files and `public/uploads`.
 *   **File Permissions for `public/uploads`**: `node_user` needs write, Apache user (`www-data` or `apache` on CentOS) needs read/execute. **Default ACLs are vital.** (Follow Step 7, adapting for Apache user).
-*   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security. Check order of directives if `Alias` isn't matching.
+*   **Apache Configuration**: Review `/uploads/` Alias and Directory block, especially `Require all denied` and `<FilesMatch>` for security. Ensure `Alias` path is correct.
 *   **HTTPS**: Use in production.
 *   **Password Hashing**: Implemented with bcrypt.
 *   **SELinux (CentOS)**: Configure if enabled, especially `httpd_can_network_connect`.
@@ -868,13 +883,13 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
                 # ... and for parent directories like /var/www/imagedrop/public/uploads/users/<userId>/<folderName>/
                 ```
                 Ensure `user:www-data` (or `user:apache`) has `r-x` on directories and `r--` on the file. The **default ACL `default:user:www-data:r-x` (or `apache`) for parent directories is key for new files/folders created by `node_user`.**
-        3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache. Ensure `mod_alias` is enabled (`sudo a2enmod alias` on Ubuntu, then restart Apache).
-        4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**. The `Alias` path `/uploads/` should map to the correct filesystem path `/var/www/imagedrop/public/uploads/`.
-        5.  **Apache Caching**: Ensure cache-busting headers are set.
+        3.  **Apache Configuration Not Loaded/Correct**: Run `sudo apache2ctl configtest` (Ubuntu) or `sudo httpd -t` (CentOS) and reload Apache. Ensure `mod_alias` and `mod_rewrite` (if used for other purposes) are enabled.
+        4.  **Incorrect Apache `Alias` or `<Directory>` Path/Configuration**. The `Alias` path `/uploads/` should map to the correct filesystem path `/var/www/imagedrop/public/uploads/`. Ensure the `<FilesMatch>` within `<Directory>` is correctly allowing your image types.
+        5.  **Apache Caching**: Ensure cache-busting headers are set as per the config.
         6.  **SELinux (CentOS)**: Check `ausearch -m avc -ts recent`. Ensure `httpd_sys_content_t` is on relevant directories and `httpd_can_network_connect` is `on`.
     *   **Check Apache Logs**: `/var/log/apache2/imagedrop_error.log` (Ubuntu) or `/var/log/httpd/imagedrop_error_log` (CentOS). These logs are vital.
     *   **Body Size Limits:** Check Apache `LimitRequestBody` vs. Next.js `bodySizeLimit`.
-    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`). These logs will show if the internal diagnostic HEAD request to `http://localhost:3000/uploads/...` is getting a 404 from Apache.
+    *   **PM2/Next.js Logs:** `pm2 logs imagedrop` (run as `node_user`). These logs will show the "The requested resource isn't a valid image..." error if the internal diagnostic HEAD request (or `next/image`'s fetch) gets HTML back.
 *   **502/503 Errors:** Node.js app (PM2) might be crashed. Check `pm2 status` and `pm2 logs imagedrop` (as `node_user`). Verify database connectivity. SELinux might block Apache proxying (check `httpd_can_network_connect`).
 
 ### 15. Updating the Application (Apache)
@@ -953,7 +968,6 @@ If SELinux is enabled on CentOS (check with `sestatus`), similar to Nginx, you'l
     *   The next user to sign up will become the admin. Default site settings will be applied by the application if the `SiteSetting` table is empty (the application logic handles seeding this).
 
 Your ImageDrop application should now be running with your chosen web server and a fresh PostgreSQL database!
-Images stored in `public/uploads/users/userId/folderName/filename.ext`.
+Images stored in `public/uploads/users/[userId]/[folderName]/[filename.ext]`.
 User data & image metadata in PostgreSQL.
 
-```
