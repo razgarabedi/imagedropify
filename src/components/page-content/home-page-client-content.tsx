@@ -85,12 +85,12 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
       const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id,
-        name: img.filename || '', // Ensure name is always a string
+        name: img.filename || '', 
         previewSrc: img.url,
         url: img.url,
         uploaderId: img.userId,
         folderName: img.folderName,
-        originalName: img.originalName || '', // Ensure originalName is always a string
+        originalName: img.originalName || '', 
       }));
       setUploadedImages(displayImages);
     } catch (error) {
@@ -250,7 +250,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {uploadedImages.filter(image => image && typeof image.id === 'string' && image.id.trim() !== '').map((image) => (
                   <ImagePreviewCard
-                    key={image.id}
+                    key={image.id} // Simplified key
                     id={image.id}
                     src={image.previewSrc}
                     url={image.url}
