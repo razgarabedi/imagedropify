@@ -38,7 +38,6 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
   }
 
   const { userId, folderName } = shareInfoResponse.folderInfo;
-  // getUserImages now returns UserImageData[]
   const images: UserImageData[] = await getUserImages(userId, undefined, folderName);
 
   return (
@@ -76,13 +75,14 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
                 <CardHeader className="p-0">
                   <div className="aspect-[4/3] relative w-full">
                     <Image
-                      src={image.url} // Full public URL from UserImageData
-                      alt={`Image: ${image.originalName}`} // Use originalName for alt text
+                      src={image.url} 
+                      alt={`Image: ${image.originalName}`} 
                       fill
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
                       style={{ objectFit: "cover" }}
                       className="transition-transform duration-300 group-hover:scale-105"
                       data-ai-hint="shared image"
+                      unoptimized={true} // <--- Added this line
                     />
                   </div>
                 </CardHeader>
@@ -112,3 +112,6 @@ export default async function SharedFolderPage({ params }: SharedPageProps) {
     </div>
   );
 }
+
+
+    

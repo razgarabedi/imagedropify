@@ -39,9 +39,9 @@ interface ImagePreviewCardProps {
   id: string;
   src: string;
   url: string;
-  name: string; // Assumed to be always a string by parent component
+  name: string;
   uploaderId: string;
-  originalName: string; // Assumed to be always a string by parent component
+  originalName: string;
   folderName: string;
   onDelete?: (imageDbId: string) => void;
   onRename?: (oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => void;
@@ -49,6 +49,14 @@ interface ImagePreviewCardProps {
 
 const initialDeleteState: DeleteImageActionState = { success: false };
 const initialRenameState: RenameImageActionState = { success: false };
+
+// Helper function to safely get filename without extension
+const getNameWithoutExtension = (filename: string | undefined | null): string => {
+  if (typeof filename !== 'string' || !filename.trim()) return '';
+  const lastDotIndex = filename.lastIndexOf('.');
+  return lastDotIndex > 0 ? filename.substring(0, lastDotIndex) : filename;
+};
+
 
 export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName, folderName, onDelete, onRename }: ImagePreviewCardProps) {
   const { toast } = useToast();
@@ -58,14 +66,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
   const [fullUrl, setFullUrl] = useState('');
 
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-
-  // Robustly get name without extension
-  const getNameWithoutExtension = (filename: string) => {
-    if (typeof filename !== 'string' || !filename) return '';
-    const lastDotIndex = filename.lastIndexOf('.');
-    return lastDotIndex > 0 ? filename.substring(0, lastDotIndex) : filename;
-  };
-
   const [newNameInput, setNewNameInput] = useState(getNameWithoutExtension(name));
 
   useEffect(() => {
@@ -77,11 +77,10 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
 
   useEffect(() => {
     const timer = setTimeout(() => setIsVisible(true), 50);
-    // Construct full URL for copying. Assumes `url` prop is the relative path.
     if (typeof window !== 'undefined' && url) {
         setFullUrl(window.location.origin + url);
     } else if (url) {
-        setFullUrl(url); // Fallback for server or if origin is not available
+        setFullUrl(url);
     }
     return () => clearTimeout(timer);
   }, [url]);
@@ -211,6 +210,7 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
           src={src} alt={`Preview of ${originalName}`} fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
           style={{objectFit: "cover"}} className="transition-transform duration-300 group-hover:scale-105"
           data-ai-hint="uploaded image" priority={false}
+          unoptimized={true} // <--- Added this line
         />
       </CardContent>
       <CardFooter className="p-4 flex-col items-start space-y-2">
@@ -225,3 +225,6 @@ export function ImagePreviewCard({ id, src, url, name, uploaderId, originalName,
     </Card>
   );
 }
+
+
+    
