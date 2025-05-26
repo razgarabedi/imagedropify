@@ -46,109 +46,109 @@ interface HomePageClientContentProps {
 export function HomePageClientContent({ serverImageContent }: HomePageClientContentProps) {
   const { user, loading: authLoading } = useAuth();
   const [uploadedImages, setUploadedImages] = useState<DisplayImage[]>([]);
-  const [isLoadingInitialImages, setIsLoadingInitialImages] = useState(true);
-  const [needsImageFetch, setNeedsImageFetch] = useState(true);
+  const [isLoadingImages, setIsLoadingImages] = useState(true);
   const [userFolders, setUserFolders] = useState<UserFolder[]>([{ name: DEFAULT_FOLDER_NAME }]);
-  const [selectedUploadFolder, setSelectedUploadFolder] = useState<string>(DEFAULT_FOLDER_NAME);
+  const [selectedFolder, setSelectedFolder] = useState<string>(DEFAULT_FOLDER_NAME);
 
   const fetchUserFoldersForUpload = useCallback(async () => {
     if (!user) {
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
-        setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
+        setSelectedFolder(DEFAULT_FOLDER_NAME);
         return;
     }
     try {
         const folders = await listUserFolders(user.id);
-        setUserFolders(folders.length > 0 ? folders : [{ name: DEFAULT_FOLDER_NAME }]);
-        if (!folders.some(f => f.name === selectedUploadFolder) || folders.length === 0) {
-            setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
+        const validFolders = folders.length > 0 ? folders : [{ name: DEFAULT_FOLDER_NAME }];
+        setUserFolders(validFolders);
+        if (!validFolders.some(f => f.name === selectedFolder)) {
+            setSelectedFolder(DEFAULT_FOLDER_NAME);
         }
     } catch (error) {
         console.error("Failed to fetch user folders for upload:", error);
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
-        setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
+        setSelectedFolder(DEFAULT_FOLDER_NAME);
     }
-  }, [user, selectedUploadFolder]);
+  }, [user, selectedFolder]);
 
-  const fetchLatestUserImages = useCallback(async () => {
+  const fetchImagesForSelectedFolder = useCallback(async (folderToFetch: string) => {
     if (authLoading) {
-        setIsLoadingInitialImages(true);
+        setIsLoadingImages(true);
         return;
     }
     if (!user) {
       setUploadedImages([]);
-      setIsLoadingInitialImages(false);
+      setIsLoadingImages(false);
       return;
     }
-    setIsLoadingInitialImages(true);
+    setIsLoadingImages(true);
     try {
-      const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, DEFAULT_FOLDER_NAME);
+      const userImagesFromServer: UserImageData[] = await getUserImages(user.id, LATEST_IMAGES_COUNT, folderToFetch);
       const displayImages: DisplayImage[] = userImagesFromServer.map(img => ({
         id: img.id,
         name: img.filename || '', 
-        previewSrc: `/uploads/users/${img.urlPath}`, // Clean URL for subsequent loads
-        url: `/uploads/users/${img.urlPath}`, // Clean URL
+        previewSrc: `/uploads/users/${img.urlPath}`, 
+        url: `/uploads/users/${img.urlPath}`, 
         uploaderId: img.userId,
         folderName: img.folderName,
         originalName: img.originalName || '', 
       }));
       setUploadedImages(displayImages);
     } catch (error) {
-      console.error("Failed to fetch user images:", error);
+      console.error(`Failed to fetch user images for folder ${folderToFetch}:`, error);
       setUploadedImages([]);
     } finally {
-      setIsLoadingInitialImages(false);
+      setIsLoadingImages(false);
     }
   }, [user, authLoading]);
 
   useEffect(() => {
     if (!authLoading) {
-      setNeedsImageFetch(true);
       if (user) {
         fetchUserFoldersForUpload();
       } else {
         setUserFolders([{ name: DEFAULT_FOLDER_NAME }]);
-        setSelectedUploadFolder(DEFAULT_FOLDER_NAME);
+        setSelectedFolder(DEFAULT_FOLDER_NAME);
+        setUploadedImages([]);
+        setIsLoadingImages(false);
       }
     }
   }, [authLoading, user, fetchUserFoldersForUpload]);
 
   useEffect(() => {
-    if (needsImageFetch && !authLoading) {
-      fetchLatestUserImages();
-      setNeedsImageFetch(false);
+    if (!authLoading && user) {
+        fetchImagesForSelectedFolder(selectedFolder);
+    } else if (!authLoading && !user) {
+        setUploadedImages([]);
+        setIsLoadingImages(false);
     }
-  }, [needsImageFetch, authLoading, fetchLatestUserImages]);
+  }, [authLoading, user, selectedFolder, fetchImagesForSelectedFolder]);
+
 
   const handleImageUpload = useCallback((imageFile: UploadedImageServerData) => {
-    // Construct the DisplayImage object for the newly uploaded image
-    // For the initial display, use a cache-busting query parameter for previewSrc
     const newImage: DisplayImage = {
       id: imageFile.id,
       name: imageFile.filename,
-      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`, // Cache-busted for next/image
-      url: `/uploads/users/${imageFile.urlPath}`, // Clean URL for copy
+      previewSrc: `/uploads/users/${imageFile.urlPath}?t=${Date.now()}`,
+      url: `/uploads/users/${imageFile.urlPath}`,
       uploaderId: imageFile.userId,
       folderName: imageFile.folderName,
       originalName: imageFile.originalName,
     };
 
-    // If the uploaded image is to the default folder, add it to the displayed list
-    if (imageFile.folderName === DEFAULT_FOLDER_NAME) {
+    if (imageFile.folderName === selectedFolder) {
       setUploadedImages(prevImages => [newImage, ...prevImages].slice(0, LATEST_IMAGES_COUNT));
     }
-    // Regardless, if the user is logged in, refresh the latest images list from server
-    // to ensure data consistency, especially if an older image was pushed out of the top LATEST_IMAGES_COUNT
+    
     if (user) {
-      fetchLatestUserImages();
+      fetchImagesForSelectedFolder(selectedFolder);
     }
-  }, [user, fetchLatestUserImages]);
+  }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
 
   const handleImageDelete = useCallback((deletedImageDbId: string) => {
     setUploadedImages((prevImages) => prevImages.filter(image => image.id !== deletedImageDbId));
-    if (user) fetchLatestUserImages(); // Re-fetch to ensure consistency
-  }, [user, fetchLatestUserImages]);
+    if (user) fetchImagesForSelectedFolder(selectedFolder);
+  }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const handleImageRename = useCallback((oldImageDbId: string, newImageDbId: string, newName: string, newUrl: string) => {
     setUploadedImages((prevImages) =>
@@ -158,14 +158,14 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
               ...image, 
               id: newImageDbId, 
               name: newName, 
-              url: newUrl, // Update clean URL
-              previewSrc: `${newUrl}?t=${Date.now()}` // Update previewSrc with new URL and cache-buster
+              url: newUrl,
+              previewSrc: `${newUrl}?t=${Date.now()}` 
             }
           : image
       )
     );
-    if (user) fetchLatestUserImages(); // Re-fetch to ensure consistency
-  }, [user, fetchLatestUserImages]);
+    if (user) fetchImagesForSelectedFolder(selectedFolder); 
+  }, [user, selectedFolder, fetchImagesForSelectedFolder]);
 
   const uniqueKeyForSkeletons = useMemo(() => Math.random(), []);
 
@@ -199,7 +199,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
 
             <div className="mt-6 max-w-md mx-auto">
                 <Label htmlFor="upload-folder-select" className="text-sm font-medium text-muted-foreground">Upload to folder:</Label>
-                <Select value={selectedUploadFolder} onValueChange={setSelectedUploadFolder} disabled={userFolders.length === 0}>
+                <Select value={selectedFolder} onValueChange={setSelectedFolder} disabled={userFolders.length === 0}>
                     <SelectTrigger id="upload-folder-select" className="w-full mt-1">
                         <SelectValue placeholder="Select a folder" />
                     </SelectTrigger>
@@ -221,7 +221,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             </div>
 
             <div className="mt-4 max-w-2xl mx-auto">
-              <ImageUploader onImageUpload={handleImageUpload} currentFolderName={selectedUploadFolder} />
+              <ImageUploader onImageUpload={handleImageUpload} currentFolderName={selectedFolder} />
             </div>
           </section>
         )}
@@ -254,9 +254,9 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
         {!authLoading && user && (
           <section aria-labelledby="gallery-title">
             <h2 id="gallery-title" className="text-2xl font-semibold text-foreground mb-6 text-center sm:text-left">
-              Your Latest Images (from &quot;{DEFAULT_FOLDER_NAME}&quot; folder)
+              Latest Images in: <span className="text-primary">&quot;{selectedFolder}&quot;</span>
             </h2>
-            {isLoadingInitialImages ? (
+            {isLoadingImages ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: LATEST_IMAGES_COUNT }).map((_, index) => (
                   <Card key={`skeleton-latest-${index}-${uniqueKeyForSkeletons}`} className="shadow-lg">
@@ -269,7 +269,7 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
             ) : uploadedImages.length === 0 ? (
               <div className="text-center py-10">
                 <ImageIconLucide className="mx-auto h-24 w-24 text-muted-foreground opacity-50 mb-4" data-ai-hint="empty state folder" />
-                <p className="text-muted-foreground text-lg">You haven&apos;t uploaded any images yet to the &quot;{DEFAULT_FOLDER_NAME}&quot; folder. Start by uploading an image above!</p>
+                <p className="text-muted-foreground text-lg">No images found in &quot;{selectedFolder}&quot;. Start by uploading an image above!</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -277,8 +277,8 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
                   <ImagePreviewCard
                     key={image.id}
                     id={image.id}
-                    src={image.previewSrc} // This will be the cache-busted URL for just-uploaded images
-                    url={image.url}         // This is the clean URL
+                    src={image.previewSrc}
+                    url={image.url}
                     name={image.name}
                     uploaderId={image.uploaderId}
                     originalName={image.originalName}
@@ -322,3 +322,4 @@ export function HomePageClientContent({ serverImageContent }: HomePageClientCont
     </div>
   );
 }
+
